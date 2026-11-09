@@ -1,0 +1,176 @@
+{
+  "name": "agent-session-restore",
+  "displayName": "Rekindle",
+  "description": "Automatically restore your terminal agents when you reopen VS Code.",
+  "version": "0.3.0",
+  "publisher": "local-tools",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "*"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:integration": "node test/run-integration.js",
+    "package": "vsce package --allow-star-activation --out rekindle.vsix"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.7.1"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentSessionRestore.restore",
+        "title": "Rekindle: Restore All",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "agentSessionRestore.open",
+        "title": "Rekindle: Open Session",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "agentSessionRestore.rename",
+        "title": "Rekindle: Rename Terminal",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "agentSessionRestore.remove",
+        "title": "Rekindle: Forget Session",
+        "icon": "$(close)"
+      },
+      {
+        "command": "agentSessionRestore.logs",
+        "title": "Rekindle: Show Logs"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentSessionRestoreContainer",
+          "title": "Rekindle",
+          "icon": "media/sessions.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentSessionRestoreContainer": [
+        {
+          "id": "agentSessionRestore.sessions",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentSessionRestore.sessions",
+        "contents": "Your terminal agents, right where you left them.\n\nStart Codex, pi, Claude Code, or AGY in a normal terminal. Rekindle remembers the conversation and restores it when you reopen this workspace.",
+        "when": "!agentSessionRestore.hasSessions"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentSessionRestore.restore",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentSessionRestore.open",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentSessionRestore.rename",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "agentSessionRestore.remove",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "1_manage@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Rekindle",
+      "properties": {
+        "agentSessionRestore.autoRestore": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically restore tracked agent terminals when opening this workspace."
+        },
+        "agentSessionRestore.codexCommand": {
+          "type": "string",
+          "default": "codex",
+          "scope": "machine",
+          "description": "Codex executable name or absolute path (without arguments)."
+        },
+        "agentSessionRestore.piCommand": {
+          "type": "string",
+          "default": "pi",
+          "scope": "machine",
+          "description": "pi executable name or absolute path (without arguments)."
+        },
+        "agentSessionRestore.codexHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Codex data directory. Empty uses CODEX_HOME or ~/.codex."
+        },
+        "agentSessionRestore.piHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "pi data directory. Empty uses PI_CODING_AGENT_DIR or ~/.pi/agent."
+        },
+        "agentSessionRestore.claudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "scope": "machine",
+          "description": "claude executable name or absolute path (without arguments)."
+        },
+        "agentSessionRestore.agyCommand": {
+          "type": "string",
+          "default": "agy",
+          "scope": "machine",
+          "description": "agy executable name or absolute path (without arguments)."
+        }
+      }
+    }
+  },
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PolarisHenry/rekindle.git"
+  },
+  "homepage": "https://github.com/PolarisHenry/rekindle#readme",
+  "bugs": {
+    "url": "https://github.com/PolarisHenry/rekindle/issues"
+  },
+  "keywords": [
+    "terminal",
+    "session",
+    "codex",
+    "claude",
+    "antigravity",
+    "pi"
+  ]
+}
