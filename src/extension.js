@@ -116,6 +116,7 @@ function activate(context) {
   command('showAllFolders', () => sessionTree.setWorkspaceOnly(false));
   command('workspaceOnly', () => sessionTree.setWorkspaceOnly(true));
   command('refreshHistory', async () => { await sessionTree.loadHistory(true); sessionTree.refresh(); });
+  command('launchSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:local-tools.agent-session-restore Arguments'));
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
     if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User) {

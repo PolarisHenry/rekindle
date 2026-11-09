@@ -26,7 +26,7 @@ class SessionManager {
 
   config() {
     const c = this.vscode.workspace.getConfiguration('agentSessionRestore');
-    return Object.fromEntries(['autoRestore', 'codexCommand', 'piCommand', 'claudeCommand', 'agyCommand', 'codexHome', 'piHome', 'claudeHome', 'agyHome'].map(key => [key, c.get(key)]));
+    return Object.fromEntries(['autoRestore', 'codexCommand', 'piCommand', 'claudeCommand', 'agyCommand', 'codexArguments', 'piArguments', 'claudeArguments', 'agyArguments', 'codexHome', 'piHome', 'claudeHome', 'agyHome'].map(key => [key, c.get(key)]));
   }
 
   async save() {

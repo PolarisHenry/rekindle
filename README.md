@@ -85,12 +85,27 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 | `piCommand` | `pi` | Executable name or absolute path |
 | `claudeCommand` | `claude` | Executable name or absolute path |
 | `agyCommand` | `agy` | Executable name or absolute path |
+| `codexArguments` | `[]` | Extra Codex startup arguments |
+| `piArguments` | `[]` | Extra pi startup arguments |
+| `claudeArguments` | `[]` | Extra Claude Code startup arguments |
+| `agyArguments` | `[]` | Extra AGY startup arguments |
 | `codexHome` | empty | Override the Codex data directory |
 | `piHome` | empty | Override the pi data directory |
 | `claudeHome` | empty | Override the Claude history directory |
 | `agyHome` | empty | Override the AGY history directory |
 
-Executable settings accept paths, not shell command fragments or extra arguments.
+Executable settings accept paths, not shell command fragments or extra arguments. Use **Sessions → … → Agent Launch Settings** to configure extra arguments separately. Each array item is one argument; values containing spaces stay intact and are never evaluated as shell code.
+
+For example, to restore Codex and AGY with your preferred permission flags, add these to your VS Code User Settings (JSON):
+
+```json
+{
+  "agentSessionRestore.codexArguments": ["--yolo"],
+  "agentSessionRestore.agyArguments": ["--dangerously-skip-permissions"]
+}
+```
+
+This launches `codex --yolo resume <saved-id>` and `agy --dangerously-skip-permissions --conversation <saved-id>`. Argument defaults are empty; these settings apply to the next restored/opened terminal and do not restart running agents.
 
 ## Local observers
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Add per-agent startup argument arrays, including support for permission flags during exact-session restoration.
+- Add Agent Launch Settings to the Sessions overflow menu.
+- Quote each configured argument independently and validate values before launching.
+
 ## 0.5.0
 
 - Default the sidebar to current-workspace sessions and prioritize the current terminal folder.

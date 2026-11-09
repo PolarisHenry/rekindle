@@ -13,6 +13,36 @@ test('resume is bound to exact IDs, never the most recent conversation', () => {
   assert.throws(() => resumeArguments({ provider: 'unknown', sessionId: 'id' }));
 });
 
+test('provider arguments precede exact resume arguments on every launch path', () => {
+  const cases = [
+    ['codex', ['--yolo'], ['resume', 'exact-id']],
+    ['agy', ['--dangerously-skip-permissions'], ['--conversation', 'exact-id']],
+    ['claude', ['--dangerously-skip-permissions'], ['--resume', 'exact-id']],
+    ['pi', ['--model', 'model with spaces'], ['--session', 'exact-id']]
+  ];
+  for (const [provider, extra, resume] of cases) {
+    const session = { provider, sessionId: 'exact-id', name: 'Agent', cwd: '/project' };
+    const config = { [`${provider}Arguments`]: extra };
+    assert.deepEqual(resumeArguments(session, config), [...extra, ...resume]);
+    assert.deepEqual(launchOptions(session, config, 'win32').shellArgs, [...extra, ...resume]);
+  }
+  for (const invalid of ['--yolo', [null], [1], ['bad\nargument'], ['bad\0argument']]) {
+    assert.throws(() => resumeCommand({ provider: 'codex', sessionId: 'exact-id' }, { codexArguments: invalid }), /array of single-line strings/);
+  }
+});
+
+test('configured arguments preserve spaces and shell metacharacters as literal values', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-args-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, 'capture');
+  await fs.writeFile(executable, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+  const extra = ['--model', "value ' $(touch INJECTED) `touch INJECTED`", '', '; touch INJECTED'];
+  const command = resumeCommand({ provider: 'codex', sessionId: 'exact-id' }, { codexCommand: executable, codexArguments: extra });
+  const stdout = execFileSync('/bin/sh', ['-c', command], { cwd: root, encoding: 'utf8' });
+  assert.equal(stdout, [...extra, 'resume', 'exact-id', ''].join('\n'));
+  await assert.rejects(fs.stat(path.join(root, 'INJECTED')), { code: 'ENOENT' });
+});
+
 test('login-shell arguments cannot execute substitutions from executable or session paths', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-quote-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

@@ -20,19 +20,23 @@ function shellQuote(value) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-function resumeArguments(session) {
+function resumeArguments(session, config = {}) {
   if (!['codex', 'pi', 'claude', 'agy'].includes(session.provider) || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
     throw new Error('Invalid agent session');
   }
-  if (session.provider === 'codex') return ['resume', session.sessionId];
-  if (session.provider === 'claude') return ['--resume', session.sessionId];
-  if (session.provider === 'agy') return ['--conversation', session.sessionId];
-  return ['--session', session.sessionFile || session.sessionId];
+  const extra = config[`${session.provider}Arguments`] ?? [];
+  if (!Array.isArray(extra) || extra.some(value => typeof value !== 'string' || /[\0\r\n]/.test(value))) {
+    throw new Error(`${session.provider}Arguments must be an array of single-line strings`);
+  }
+  if (session.provider === 'codex') return [...extra, 'resume', session.sessionId];
+  if (session.provider === 'claude') return [...extra, '--resume', session.sessionId];
+  if (session.provider === 'agy') return [...extra, '--conversation', session.sessionId];
+  return [...extra, '--session', session.sessionFile || session.sessionId];
 }
 
 function launchOptions(session, config = {}, platform = process.platform) {
   const executable = config[`${session.provider}Command`] || session.provider;
-  const args = resumeArguments(session);
+  const args = resumeArguments(session, config);
   const env = { AGENT_SESSION_RESTORE_ID: session.id };
   if (session.provider === 'codex' && config.codexHome) env.CODEX_HOME = expandHome(config.codexHome);
   if (session.provider === 'pi' && config.piHome) env.PI_CODING_AGENT_DIR = expandHome(config.piHome);
@@ -48,7 +52,7 @@ function launchOptions(session, config = {}, platform = process.platform) {
 }
 
 function resumeCommand(session, config = {}) {
-  return [config[`${session.provider}Command`] || session.provider, ...resumeArguments(session)].map(shellQuote).join(' ');
+  return [config[`${session.provider}Command`] || session.provider, ...resumeArguments(session, config)].map(shellQuote).join(' ');
 }
 
 function cleanTitle(text) {

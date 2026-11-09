@@ -120,3 +120,16 @@ test('switching conversations archives the old session instead of overwriting it
   assert.equal(manager.live.has(a.id), false);
   assert.equal(manager.entries.length, 2);
 });
+
+test('restoration reads per-agent arguments from VS Code settings', async () => {
+  const { manager, vscode } = setup();
+  const config = { codexArguments: ['--yolo'], agyArguments: ['--dangerously-skip-permissions'] };
+  vscode.workspace.getConfiguration = () => ({ get: key => config[key] });
+  await manager.add(session('exact-codex'), 'Codex');
+  await manager.add({ provider: 'agy', sessionId: 'exact-agy', cwd: os.tmpdir() }, 'AGY');
+  await manager.restore();
+  assert.deepEqual(vscode.window.terminals.map(item => item.sent), [
+    "'codex' '--yolo' 'resume' 'exact-codex'",
+    "'agy' '--dangerously-skip-permissions' '--conversation' 'exact-agy'"
+  ]);
+});

@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -118,6 +118,11 @@
         "command": "agentSessionRestore.workspaceOnly",
         "title": "Current Workspace Only",
         "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.launchSettings",
+        "title": "Agent Launch Settings",
+        "category": "Rekindle"
       }
     ],
     "viewsContainers": {
@@ -185,6 +190,11 @@
           "submenu": "rekindle.groupBy",
           "when": "view == agentSessionRestore.sessions",
           "group": "2_grouping@1"
+        },
+        {
+          "command": "agentSessionRestore.launchSettings",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "3_settings@1"
         }
       ],
       "view/item/context": [
@@ -280,6 +290,46 @@
           "default": "",
           "scope": "machine",
           "description": "agy data directory for the history browser. Empty uses the standard location."
+        },
+        "agentSessionRestore.codexArguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\u0000\\r\\n]*$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra Codex startup arguments used when restoring or opening a session. Each item is one argument (for example, `--yolo`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+        },
+        "agentSessionRestore.piArguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\u0000\\r\\n]*$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra pi startup arguments used when restoring or opening a session. Each item is one argument (for example, `--model`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+        },
+        "agentSessionRestore.claudeArguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\u0000\\r\\n]*$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra Claude Code startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+        },
+        "agentSessionRestore.agyArguments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^\\u0000\\r\\n]*$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra AGY startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
         }
       }
     },
