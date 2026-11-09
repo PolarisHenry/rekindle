@@ -1,7 +1,7 @@
 'use strict';
 
 const vscode = require('vscode');
-const { cleanTitle } = require('./core');
+const { cleanTitle, discoverSessions, isInWorkspace } = require('./core');
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
 const { unusedShell, removeStartupShells } = require('./startup');
@@ -45,6 +45,46 @@ function activate(context) {
     const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: 'Choose a session' });
     return picked?.entry;
   }
+
+  command('add', async () => {
+    if (!vscode.workspace.workspaceFolders?.length) throw new Error('Open a workspace before adding a session.');
+    const provider = await vscode.window.showQuickPick([
+      { label: 'Codex', value: 'codex' }, { label: 'pi', value: 'pi' },
+      { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity CLI', value: 'agy' }
+    ], { title: 'Rekindle: Add Session', placeHolder: 'Choose an agent' });
+    if (!provider) return;
+    let session;
+    const folders = vscode.workspace.workspaceFolders.map(folder => folder.uri.fsPath);
+    if (['codex', 'pi'].includes(provider.value)) {
+      const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
+      sessions.sort((a, b) => Number(isInWorkspace(b.cwd, folders)) - Number(isInWorkspace(a.cwd, folders)) || b.updatedAt - a.updatedAt);
+      const selected = await vscode.window.showQuickPick([
+        ...sessions.map(row => ({ label: row.title, description: row.cwd, detail: row.sessionId, session: row })),
+        { label: '$(edit) Enter a session ID', manual: true }
+      ], { title: `Add ${provider.label} Session`, matchOnDescription: true, matchOnDetail: true });
+      if (!selected) return;
+      session = selected.session;
+    }
+    if (!session) {
+      const sessionId = await vscode.window.showInputBox({ title: `Add ${provider.label} Session`, prompt: 'Enter the exact ID of an existing saved conversation.', validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? 'Enter a valid saved session ID.' : undefined });
+      if (!sessionId) return;
+      const directory = await vscode.window.showQuickPick([
+        ...folders.map(cwd => ({ label: cwd, cwd })), { label: '$(folder-opened) Browse for a project folder', browse: true }
+      ], { title: 'Conversation working directory' });
+      if (!directory) return;
+      let cwd = directory.cwd;
+      if (directory.browse) {
+        const selected = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder' });
+        cwd = selected?.[0]?.fsPath;
+      }
+      if (!cwd) return;
+      session = { provider: provider.value, sessionId: sessionId.trim(), cwd, title: sessionId.trim() };
+    }
+    const name = await vscode.window.showInputBox({ title: 'Terminal name', value: `${provider.label} · ${cleanTitle(session.title).slice(0, 45)}`, validateInput: value => value.trim() ? undefined : 'Enter a name.' });
+    if (!name) return;
+    const entry = await manager.add(session, cleanTitle(name));
+    await manager.open(entry);
+  });
 
   command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
   command('restore', async () => {

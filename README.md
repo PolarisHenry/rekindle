@@ -15,6 +15,10 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Removes an untouched startup shell only after an agent is restored, and only if the shell has no child processes. With no agents to restore, the default shell stays.
 - Provides an English **Rekindle → Sessions** sidebar for inspecting or forgetting tracked sessions.
 
+## Optional manual sessions
+
+Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session** to add an existing conversation manually. Codex and pi offer a local history picker; all four agents accept an exact saved session ID and project folder. Automatic tracking remains the default and requires no manual list.
+
 ## Agents
 
 | Agent | How it is tracked | Restore command |

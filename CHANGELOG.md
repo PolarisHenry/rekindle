@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Restore the optional **Add Session** sidebar action alongside automatic tracking.
+- Browse local Codex/pi history or enter an existing session ID for any supported provider.
+
 ## 0.3.0 — Rekindle
 
 - Introduce the Rekindle name, original icon, and English interface.

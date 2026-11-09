@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -34,6 +34,11 @@
   },
   "contributes": {
     "commands": [
+      {
+        "command": "agentSessionRestore.add",
+        "title": "Rekindle: Add Session",
+        "icon": "$(add)"
+      },
       {
         "command": "agentSessionRestore.restore",
         "title": "Rekindle: Restore All",
@@ -79,12 +84,17 @@
     "viewsWelcome": [
       {
         "view": "agentSessionRestore.sessions",
-        "contents": "Your terminal agents, right where you left them.\n\nStart Codex, pi, Claude Code, or AGY in a normal terminal. Rekindle remembers the conversation and restores it when you reopen this workspace.",
+        "contents": "Your terminal agents, right where you left them.\n\nStart Codex, pi, Claude Code, or AGY in a normal terminal. Rekindle remembers the conversation and restores it when you reopen this workspace.\n\n[Add an existing session](command:agentSessionRestore.add)",
         "when": "!agentSessionRestore.hasSessions"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "agentSessionRestore.add",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@1"
+        },
         {
           "command": "agentSessionRestore.restore",
           "when": "view == agentSessionRestore.sessions",
