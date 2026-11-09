@@ -35,6 +35,21 @@ exports.run = async function () {
     const second = manager.entries[1];
     const root = await api.tree.getChildren();
     assert.ok(root.every(node=>node.kind==='folder'||node.kind==='agent'),'root contains only actual groups');
+    for (const group of root) {
+      const subgroups = await api.tree.getChildren(group);
+      assert.ok(subgroups.length > 0);
+      assert.ok(subgroups.every(child => child.kind === (group.kind === 'folder' ? 'agent' : 'folder')), 'second level uses the other grouping dimension');
+      for (const subgroup of subgroups) {
+        const groupItem = api.tree.getTreeItem(subgroup);
+        assert.ok(groupItem.id);
+        for (const leaf of await api.tree.getChildren(subgroup)) {
+          assert.equal(leaf.kind, undefined);
+          const item = api.tree.getTreeItem(leaf);
+          const icon = item.iconPath;
+          for (const uri of icon.light ? [icon.light,icon.dark] : [icon]) await fs.access(uri.fsPath);
+        }
+      }
+    }
     if (phase === 'environment-restore') {
       assert.ok(vscode.extensions.getExtension('ms-python.vscode-python-envs'), 'simulated Python API provider is available');
       await until(async()=> {
@@ -168,7 +183,10 @@ exports.run = async function () {
   await until(() => vscode.window.activeTerminal === manager.live.get(manager.entries[0].id));
   for (const terminal of vscode.window.terminals) {
     assert.equal(terminal.creationOptions.isTransient, true);
-    assert.equal(terminal.creationOptions.iconPath.id, 'terminal', 'agent tabs use the normal terminal icon');
+    const icon = terminal.creationOptions.iconPath;
+    const paths = icon.light ? [icon.light.fsPath, icon.dark.fsPath] : [icon.fsPath];
+    assert.ok(paths.every(file => file.includes(`${path.sep}media${path.sep}agents${path.sep}`)), 'agent tabs use bundled provider artwork');
+    for (const file of paths) await fs.access(file);
     assert.equal(terminal.creationOptions.shellArgs, undefined, 'resume command must not replace the shell startup');
     assert.ok(terminal.shellIntegration, 'restored terminal retains VS Code shell integration');
     terminal.dispose();

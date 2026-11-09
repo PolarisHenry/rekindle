@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- Nest both grouping dimensions: Folder → Agent → Session or Agent → Folder → Session.
+- Keep current-folder priority, history filters, enabled counts, and unique full-path group identities across both levels.
+- Use bundled official Codex, pi, Claude Code, and Antigravity artwork in the sidebar and restored terminal tabs.
+
 ## 0.5.1
 
 - Add per-agent startup argument arrays, including support for permission flags during exact-session restoration.

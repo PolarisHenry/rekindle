@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { sessionKey, launchOptions, resumeCommand } = require('./core');
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
 const { retireIdleTerminal } = require('./startup');
+const { agentIcon } = require('./agent-icons');
 const STORAGE_KEY = 'agentSessionRestore.sessions.v1';
 
 class SessionManager {
@@ -121,7 +122,7 @@ class SessionManager {
         const bound = new Set(this.live.values());
         revived = this.vscode.window.terminals.find(terminal => !bound.has(terminal) && terminal.name === entry.name && terminal.exitStatus === undefined);
       }
-      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: new this.vscode.ThemeIcon('terminal') }, this.log, undefined, revived);
+      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
       this.live.set(entry.id, terminal);
       await this.startInShell(terminal, entry);
       if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);

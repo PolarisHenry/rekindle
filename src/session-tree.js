@@ -1,6 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { sessionKey, discoverSessions, isInWorkspace } = require('./core');
+const { agentIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
 
 function groupedSessions(tracked, history, showHistory, options = {}) {
@@ -29,10 +30,25 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
       : { kind: 'folder', cwd, sessions: [] });
     groups.get(key).sessions.push(entry);
   }
-  for (const group of groups.values()) group.sessions.sort((a,b) => priority(a)-priority(b) || Number(b.enabled !== false)-Number(a.enabled !== false) || a.name.localeCompare(b.name));
   const rank = group => Math.min(...group.sessions.map(priority));
   const label = group => group.kind === 'folder' ? group.cwd : AGENT_NAMES[group.provider] || group.provider;
-  return [...groups.values()].sort((a,b) => rank(a)-rank(b) || label(a).localeCompare(label(b)));
+  const compare = (a,b) => rank(a)-rank(b) || label(a).localeCompare(label(b));
+  for (const [key, group] of groups) {
+    group.groupId = JSON.stringify([groupBy, key]);
+    group.sessions.sort((a,b) => priority(a)-priority(b) || Number(b.enabled !== false)-Number(a.enabled !== false) || a.name.localeCompare(b.name));
+    const children = new Map();
+    for (const entry of group.sessions) {
+      const cwd = path.resolve(entry.cwd);
+      const childKey = group.kind === 'agent' ? cwd : entry.provider;
+      if (!children.has(childKey)) children.set(childKey, {
+        ...(group.kind === 'agent' ? { kind: 'folder', cwd } : { kind: 'agent', provider: entry.provider }),
+        groupId: JSON.stringify([groupBy, key, childKey]), sessions: []
+      });
+      children.get(childKey).sessions.push(entry);
+    }
+    group.children = [...children.values()].sort(compare);
+  }
+  return [...groups.values()].sort(compare);
 }
 
 class SessionTree {
@@ -114,7 +130,7 @@ class SessionTree {
   }
 
   async getChildren(node) {
-    if (node?.kind === 'folder' || node?.kind === 'agent') return node.sessions;
+    if (node?.kind === 'folder' || node?.kind === 'agent') return node.children || node.sessions;
     if (node) return [];
     if (this.showHistory) await this.loadHistory();
     const groups = groupedSessions(this.manager.entries, this.history, this.showHistory, this.displayOptions());
@@ -127,10 +143,10 @@ class SessionTree {
     if (node.kind === 'folder' || node.kind === 'agent') {
       const enabled = node.sessions.filter(entry => entry.enabled !== false).length;
       const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, enabled ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
-      item.id = node.kind === 'folder' ? `folder:${node.cwd}` : `agent:${node.provider}`;
+      item.id = `group:${node.groupId}`;
       item.description = `${enabled} enabled · ${node.sessions.length} sessions`;
       item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
-      item.iconPath = new v.ThemeIcon(node.kind === 'folder' ? 'folder' : 'hubot');
+      item.iconPath = node.kind === 'folder' ? new v.ThemeIcon('folder') : agentIcon(v, node.provider);
       item.contextValue = node.kind === 'folder' ? 'sessionFolder' : 'sessionAgent';
       return item;
     }
@@ -138,10 +154,10 @@ class SessionTree {
     const enabled = node.enabled !== false;
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
     item.id = `session:${sessionKey(node)}`;
-    item.description = `${this.groupBy === 'agent' ? path.basename(node.cwd) : node.provider} · ${enabled ? 'Enabled' : 'History'}${running && v.window.terminals.includes(running) ? ' · Running' : ''}`;
+    item.description = `${enabled ? 'Enabled' : 'History'}${running && v.window.terminals.includes(running) ? ' · Running' : ''}`;
     item.checkboxState = enabled ? v.TreeItemCheckboxState.Checked : v.TreeItemCheckboxState.Unchecked;
     item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}\nClick to open. Check to enable automatic restoration.`;
-    item.iconPath = new v.ThemeIcon('terminal');
+    item.iconPath = agentIcon(v, node.provider);
     item.contextValue = node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession';
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;

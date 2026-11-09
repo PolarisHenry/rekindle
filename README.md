@@ -14,7 +14,7 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Preserves normal shell integration by launching the agent inside your regular shell.
 - Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
 - Observes the entire restoration phase and removes only untouched, idle startup shells.
-- Provides an English **Rekindle → Sessions** sidebar grouped by folder or agent. By default, it shows enabled sessions in the current workspace, prioritizing the current terminal folder.
+- Provides an English **Rekindle → Sessions** sidebar with Folder → Agent → Session or Agent → Folder → Session grouping. By default, it shows enabled sessions in the current workspace, prioritizing the current terminal folder.
 
 ## Optional manual sessions
 
@@ -51,7 +51,7 @@ Open the Sessions header's **…** menu for view options:
 
 - **Show History / Hide History:** include paused records and saved local conversations from Codex, pi, Claude Code, and AGY. Off by default.
 - **Show All Folders / Current Workspace Only:** restrict the list to the open workspace folders by default, or browse conversations from other projects.
-- **Group By → By Folder / By Agent:** switch between project-folder groups and agent-provider groups.
+- **Group By → By Folder / By Agent:** choose **Folder → Agent → Session** or **Agent → Folder → Session**. Both modes retain the second grouping level; folders use full paths for identity and tooltips.
 
 The current terminal folder is prioritized, followed by other workspace folders and then external folders when enabled. View choices are remembered per workspace and shown in the view description. These display filters do not change which enabled sessions restore at startup. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
 
@@ -74,7 +74,7 @@ Deleting a terminal using its trash button disables its automatic restore and re
 
 ## Settings
 
-Restored agent tabs use the standard terminal icon.
+Agent groups, session rows, and restored terminal tabs use bundled official provider artwork. Codex has separate light/dark assets; the other providers retain their original brand colors. See [asset sources](media/agents/README.md).
 
 The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 

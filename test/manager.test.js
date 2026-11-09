@@ -14,6 +14,7 @@ function setup(initial = []) {
       terminals.push(terminal);
       return terminal;
     } },
+    Uri: { file: fsPath => ({ scheme: 'file', fsPath }) },
     ThemeIcon: class {}
   };
   const context = { workspaceState: { get: (key, fallback) => data[key] ?? fallback, update: async (key, value) => { data[key] = value; } } };
