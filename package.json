@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -41,7 +41,7 @@
       },
       {
         "command": "agentSessionRestore.restore",
-        "title": "Rekindle: Restore All",
+        "title": "Rekindle: Restore Enabled Sessions",
         "icon": "$(debug-restart)"
       },
       {
@@ -62,6 +62,21 @@
       {
         "command": "agentSessionRestore.logs",
         "title": "Rekindle: Show Logs"
+      },
+      {
+        "command": "agentSessionRestore.enable",
+        "title": "Rekindle: Enable Auto Restore",
+        "icon": "$(play)"
+      },
+      {
+        "command": "agentSessionRestore.disable",
+        "title": "Rekindle: Disable Auto Restore",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "agentSessionRestore.refreshHistory",
+        "title": "Rekindle: Refresh History",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -99,23 +114,38 @@
           "command": "agentSessionRestore.restore",
           "when": "view == agentSessionRestore.sessions",
           "group": "navigation@2"
+        },
+        {
+          "command": "agentSessionRestore.refreshHistory",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
         {
           "command": "agentSessionRestore.open",
-          "when": "view == agentSessionRestore.sessions",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)$/",
           "group": "inline@1"
         },
         {
           "command": "agentSessionRestore.rename",
-          "when": "view == agentSessionRestore.sessions",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)$/",
           "group": "1_manage@1"
         },
         {
           "command": "agentSessionRestore.remove",
-          "when": "view == agentSessionRestore.sessions",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)$/",
           "group": "1_manage@3"
+        },
+        {
+          "command": "agentSessionRestore.enable",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(disabledSession|historySession)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentSessionRestore.disable",
+          "when": "view == agentSessionRestore.sessions && viewItem == enabledSession",
+          "group": "inline@2"
         }
       ]
     },
@@ -162,6 +192,18 @@
           "default": "agy",
           "scope": "machine",
           "description": "agy executable name or absolute path (without arguments)."
+        },
+        "agentSessionRestore.claudeHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "claude data directory for the history browser. Empty uses the standard location."
+        },
+        "agentSessionRestore.agyHome": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "agy data directory for the history browser. Empty uses the standard location."
         }
       }
     },
@@ -185,5 +227,8 @@
     "claude",
     "antigravity",
     "pi"
-  ]
+  ],
+  "dependencies": {
+    "@vscode/python-environments": "1.4.0"
+  }
 }

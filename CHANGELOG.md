@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Group sidebar sessions by working folder, with a persisted Show history checkbox.
+- Browse native Codex, pi, Claude Code, and AGY history on demand.
+- Enable or disable auto restore without stopping running agents; open history once without enabling it.
+- Preserve old conversations when an observed terminal switches sessions or is closed.
+- Create activated Python terminals through the optional public Python Environments API and wait for shell setup commands before starting agents.
+
 ## 0.3.2
 
 - Prevent VS Code from creating a default shell before agent restoration by contributing `hideOnStartup: whenEmpty`.

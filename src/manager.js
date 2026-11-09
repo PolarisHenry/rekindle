@@ -3,6 +3,8 @@
 const fs = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
 const { sessionKey, launchOptions, resumeCommand } = require('./core');
+const { createAgentTerminal, ShellGate } = require('./python-terminal');
+const { retireIdleTerminal } = require('./startup');
 const STORAGE_KEY = 'agentSessionRestore.sessions.v1';
 
 class SessionManager {
@@ -14,15 +16,17 @@ class SessionManager {
     this.entries = context.workspaceState.get(STORAGE_KEY, []).filter(entry => {
       try { launchOptions(entry); return typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.cwd === 'string'; }
       catch { return false; }
-    });
+    }).map(entry => ({ ...entry, enabled: entry.enabled !== false }));
     this.live = new Map();
     this.opening = new Map();
     this.writes = Promise.resolve();
+    this.shellGate = new ShellGate(vscode);
+    context.subscriptions?.push(this.shellGate);
   }
 
   config() {
     const c = this.vscode.workspace.getConfiguration('agentSessionRestore');
-    return Object.fromEntries(['autoRestore', 'codexCommand', 'piCommand', 'claudeCommand', 'agyCommand', 'codexHome', 'piHome'].map(key => [key, c.get(key)]));
+    return Object.fromEntries(['autoRestore', 'codexCommand', 'piCommand', 'claudeCommand', 'agyCommand', 'codexHome', 'piHome', 'claudeHome', 'agyHome'].map(key => [key, c.get(key)]));
   }
 
   async save() {
@@ -32,14 +36,42 @@ class SessionManager {
     this.changed();
   }
 
-  async add(session, name) {
+  async add(session, name, enabled = true) {
     const existing = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
     if (existing) return existing;
     const entry = { id: randomUUID(), provider: session.provider, sessionId: session.sessionId,
-      sessionFile: session.sessionFile, cwd: session.cwd, name, createdAt: new Date().toISOString() };
+      sessionFile: session.sessionFile, cwd: session.cwd, name, enabled, createdAt: new Date().toISOString() };
     this.entries.push(entry);
     await this.save();
     return entry;
+  }
+
+  async setEnabled(id, enabled) {
+    const entry = this.entries.find(item => item.id === id);
+    if (!entry) return;
+    entry.enabled = enabled;
+    await this.save();
+  }
+
+  observe(session, terminal, previousId) {
+    let entry = this.entries.find(row => row.id === previousId);
+    let dirty = false;
+    if (entry && sessionKey(entry) !== sessionKey(session)) {
+      entry.enabled = false;
+      this.live.delete(entry.id);
+      entry = undefined;
+      dirty = true;
+    }
+    if (!entry) entry = this.entries.find(row => sessionKey(row) === sessionKey(session));
+    if (!entry) {
+      entry = { id: randomUUID(), enabled: true, createdAt: new Date().toISOString() };
+      this.entries.push(entry);
+      dirty = true;
+    }
+    const values = { provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: terminal.name, automatic: true, unresolved: false };
+    if (Object.keys(values).some(key => entry[key] !== values[key])) { Object.assign(entry, values); dirty = true; }
+    this.live.set(entry.id, terminal);
+    return { entry, dirty };
   }
 
   async startInShell(terminal, entry) {
@@ -56,6 +88,9 @@ class SessionManager {
       });
     }
     if (!this.vscode.window.terminals.includes(terminal) || !this.entries.some(item => item.id === entry.id)) return;
+    const pythonInstalled = this.vscode.extensions?.getExtension('ms-python.python') || this.vscode.extensions?.getExtension('ms-python.vscode-python-envs');
+    await this.shellGate.wait(terminal, { grace: pythonInstalled ? 1000 : 0 });
+    if (!this.vscode.window.terminals.includes(terminal)) return;
     const command = resumeCommand(entry, this.config());
     if (terminal.shellIntegration) terminal.shellIntegration.executeCommand(command);
     else terminal.sendText(command, true);
@@ -81,21 +116,15 @@ class SessionManager {
       }
       // Check again after asynchronous filesystem validation to avoid racing an explicit remove.
       if (!this.entries.some(item => item.id === entry.id)) return;
+      let revived;
       if (entry.automatic) {
         const bound = new Set(this.live.values());
-        const revived = this.vscode.window.terminals.find(terminal => !bound.has(terminal) && terminal.name === entry.name && terminal.exitStatus === undefined);
-        if (revived) {
-          // VS Code revives ordinary terminals as shells. Restore the CLI in that
-          // existing tab instead of appending another terminal beside it.
-          this.live.set(entry.id, revived);
-          await this.startInShell(revived, entry);
-          if (reveal) revived.show(true);
-          return revived;
-        }
+        revived = this.vscode.window.terminals.find(terminal => !bound.has(terminal) && terminal.name === entry.name && terminal.exitStatus === undefined);
       }
-      const terminal = this.vscode.window.createTerminal({ ...launchOptions(entry, this.config()), iconPath: new this.vscode.ThemeIcon('history') });
+      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: new this.vscode.ThemeIcon('history') }, this.log, undefined, revived);
       this.live.set(entry.id, terminal);
       await this.startInShell(terminal, entry);
+      if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);
       if (reveal) terminal.show(true);
       this.log(`Started ${entry.provider} session ${entry.sessionId}`);
       this.changed();
@@ -109,7 +138,7 @@ class SessionManager {
   async restore() {
     const failures = [];
     let first;
-    for (const entry of [...this.entries]) {
+    for (const entry of this.entries.filter(item => item.enabled !== false)) {
       try {
         const terminal = await this.open(entry, false);
         if (!first && terminal) first = terminal;

@@ -10,7 +10,7 @@ function setup(initial = []) {
   const vscode = {
     workspace: { isTrusted: true, getConfiguration: () => ({ get: () => undefined }) },
     window: { terminals, createTerminal(options) {
-      const terminal = { creationOptions: options, sendText(command) { this.sent = command; }, show(preserveFocus) { this.shownWith = preserveFocus; vscode.window.activeTerminal = this; }, dispose() { this.disposed = true; } };
+      const terminal = { name: options.name, creationOptions: options, sendText(command) { this.sent = command; }, show(preserveFocus) { this.shownWith = preserveFocus; vscode.window.activeTerminal = this; }, dispose() { this.disposed = true; } };
       terminals.push(terminal);
       return terminal;
     } },
@@ -81,4 +81,42 @@ test('restore focuses the first successful agent, never creates a default shell'
   assert.equal(vscode.window.activeTerminal.shownWith, false, 'keyboard focus moves into the agent');
   await manager.restore();
   assert.equal(terminals.length, 2);
+});
+
+test('disabled sessions remain in history and are not restored after restart', async () => {
+  const { manager, terminals, context, vscode } = setup();
+  const a = await manager.add(session('a'), 'A');
+  const b = await manager.add(session('b'), 'B');
+  await manager.setEnabled(a.id, false);
+  const restarted = new SessionManager(vscode, context, () => {}, () => {});
+  await restarted.restore();
+  assert.equal(restarted.entries.length, 2);
+  assert.equal(terminals.length, 1);
+  assert.equal(terminals[0].creationOptions.env.AGENT_SESSION_RESTORE_ID, b.id);
+  await restarted.open(restarted.entries.find(entry => entry.id === a.id));
+  assert.equal(restarted.entries.find(entry => entry.id === a.id).enabled, false, 'opening history once does not enable auto restore');
+});
+
+test('observing a paused running agent cannot silently re-enable restoration', async () => {
+  const { manager } = setup();
+  const entry = await manager.add(session('a'), 'A');
+  const terminal = await manager.open(entry);
+  await manager.setEnabled(entry.id, false);
+  manager.observe(session('a'), terminal, entry.id);
+  assert.equal(entry.enabled, false);
+  assert.equal(terminal.disposed, undefined);
+});
+
+test('switching conversations archives the old session instead of overwriting it', async () => {
+  const { manager } = setup();
+  const a = await manager.add(session('a'), 'A');
+  const terminal = await manager.open(a);
+  terminal.name = 'New conversation';
+  const observed = manager.observe(session('b'), terminal, a.id);
+  assert.equal(a.enabled, false);
+  assert.equal(a.sessionId, 'a');
+  assert.equal(observed.entry.sessionId, 'b');
+  assert.equal(observed.entry.enabled, true);
+  assert.equal(manager.live.has(a.id), false);
+  assert.equal(manager.entries.length, 2);
 });

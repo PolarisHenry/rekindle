@@ -14,11 +14,11 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Preserves normal shell integration by launching the agent inside your regular shell.
 - Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
 - Observes the entire restoration phase and removes only untouched, idle startup shells.
-- Provides an English **Rekindle → Sessions** sidebar for inspecting or forgetting tracked sessions.
+- Provides an English **Rekindle → Sessions** sidebar grouped by working folder. By default, it shows only sessions with automatic restore enabled.
 
 ## Optional manual sessions
 
-Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session** to add an existing conversation manually. Codex and pi offer a local history picker; all four agents accept an exact saved session ID and project folder. Automatic tracking remains the default and requires no manual list.
+Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session** to add an existing conversation manually. All four agents offer a local history picker and also accept an exact saved session ID and project folder. Automatic tracking remains the default and requires no manual list.
 
 ## Agents
 
@@ -45,11 +45,26 @@ Load the updated extension, then use a normal terminal. Existing pi processes ne
 
 The package identifier and settings namespace remain `local-tools.agent-session-restore` / `agentSessionRestore.*` so upgrades retain existing workspace records. Its visible name, sidebar, commands, logs, and settings text are **Rekindle**, in English.
 
+## Sidebar and history
+
+Sessions are grouped by their working folder. The **Show history** checkbox includes paused records and saved local conversations from Codex, pi, Claude Code, and AGY. It is off by default and remembered per workspace. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
+
+- **Session checkbox / Enable Auto Restore / Disable Auto Restore:** controls restoration on the next workspace startup. Disabling does not stop a running agent.
+- **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
+- **Show history:** reveals disabled sessions so they can be opened or enabled again.
+- Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
+
+## Python environment activation
+
+When the Python Environments extension is available and automatic activation is enabled, Rekindle uses its public API to create a terminal with the selected project environment activated **before** launching the agent. A `source .../.venv/bin/activate` command therefore runs in the shell, not inside the agent's prompt.
+
+For ordinary or revived terminals, Rekindle also observes shell command start/end events and waits for startup commands to finish. A long-running setup command defers restoration rather than receiving the agent command as input. Python remains optional; projects without the extension use normal shells. If a compatible provider API is unavailable, Rekindle falls back to tracking startup shell commands. No global Python activation settings are changed.
+
 ## Everyday behavior
 
 Closing VS Code preserves tracked sessions. Reopening the same workspace restores their saved conversation history. It does **not** keep closed agents running in the background or automatically send another prompt.
 
-Deleting a terminal using its trash button forgets that terminal's automatic restore record. Exiting an agent back to a regular shell removes its record after roughly ten seconds. The sidebar's **Forget Session** command removes a record without deleting the conversation history.
+Deleting a terminal using its trash button disables its automatic restore and retains it in history. Exiting an agent back to a regular shell archives its record after roughly ten seconds. **Forget Session** removes Rekindle's mapping without deleting the native CLI conversation; native history can still show that conversation.
 
 ## Settings
 
@@ -64,6 +79,8 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 | `agyCommand` | `agy` | Executable name or absolute path |
 | `codexHome` | empty | Override the Codex data directory |
 | `piHome` | empty | Override the pi data directory |
+| `claudeHome` | empty | Override the Claude history directory |
+| `agyHome` | empty | Override the AGY history directory |
 
 Executable settings accept paths, not shell command fragments or extra arguments.
 
@@ -97,7 +114,7 @@ npm run test:integration
 npm run package
 ```
 
-Unit tests cover session identity, argument quoting, hook formats, merging existing configurations, process ownership, focus, and startup-shell safeguards. Integration tests use a real local VS Code installation with isolated user data and simulated agent processes, including the real hook reporter. They restart VS Code to verify persistence and provider-specific restore arguments. No model calls are made. Set `VSCODE_EXECUTABLE_PATH` if VS Code is installed elsewhere.
+Unit tests cover session identity, argument quoting, hook formats, merging existing configurations, process ownership, focus, and startup-shell safeguards. Integration tests use a real local VS Code installation with isolated user data and simulated agent processes, including the real hook reporter. Python activation tests run an actual shell `source` command through a simulated provider API and verify that agent processes inherit the activated environment. Sidebar tests verify folder grouping, historical visibility, one-time opening, and persisted enable/disable state. They restart VS Code to verify persistence and provider-specific restore arguments. No model calls are made. Set `VSCODE_EXECUTABLE_PATH` if VS Code is installed elsewhere.
 
 A GitHub Actions example is included in `docs/ci.example.yml`. To enable it, move it to `.github/workflows/ci.yml` using an account token with workflow permissions.
 

@@ -3,6 +3,7 @@ const vscode = require('vscode');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { shellQuote } = require('../src/core');
 
 async function until(check, timeout = 20000) {
   const end = Date.now() + timeout;
@@ -21,6 +22,49 @@ exports.run = async function () {
   const api = await extension.activate();
   await api.ready;
   const manager = api.manager;
+  async function launchOrdinaryAgent(name, args) {
+    const terminal = vscode.window.createTerminal({name, cwd:path.join(data,'workspace')});
+    await until(() => Boolean(terminal.shellIntegration));
+    const cli = path.join(data, "fake agent's cli");
+    terminal.shellIntegration.executeCommand([cli,...args].map(shellQuote).join(' '));
+    return terminal;
+  }
+  if (phase === 'environment-restore' || phase === 'disabled-restore') {
+    assert.equal(manager.entries.length, 2);
+    const first = manager.entries[0];
+    const second = manager.entries[1];
+    const root = await api.tree.getChildren();
+    assert.equal(root[0].kind, 'filter');
+    if (phase === 'environment-restore') {
+      assert.ok(vscode.extensions.getExtension('ms-python.vscode-python-envs'), 'simulated Python API provider is available');
+      await until(async()=> {
+        const text=await fs.readFile(path.join(data,'launches.jsonl'),'utf8');
+        return text.trim().split('\n').map(JSON.parse).slice(-2).every(row=>row.pythonEnv==='active');
+      });
+      assert.equal(vscode.window.terminals.length,2,'source activation did not create extra terminals: '+vscode.window.terminals.map(terminal=>terminal.name).join(', '));
+      await api.tree.checked({items:[[first,vscode.TreeItemCheckboxState.Unchecked]]});
+      assert.equal(first.enabled,false);
+      assert.ok(vscode.window.terminals.includes(manager.live.get(first.id)),'disabling auto restore does not stop the running agent');
+      const enabledFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
+      assert.equal(enabledFolders.flatMap(folder=>folder.sessions).length,1);
+      api.tree.history=[];
+      api.tree.loadedAt=Date.now();
+      await api.tree.checked({items:[[api.tree.filter,vscode.TreeItemCheckboxState.Checked]]});
+      const allFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
+      assert.equal(allFolders.flatMap(folder=>folder.sessions).length,2,'Show history reveals the paused conversation');
+    } else {
+      assert.equal(first.enabled,false,'disabled flag persisted across application restart');
+      assert.equal(vscode.window.terminals.length,1,'only the enabled conversation was restored');
+      assert.equal(vscode.window.activeTerminal,manager.live.get(second.id));
+      await manager.open(first);
+      assert.equal(vscode.window.terminals.length,2,'history can be opened once');
+      assert.equal(first.enabled,false,'opening history does not silently enable auto restore');
+      await api.tree.checked({items:[[first,vscode.TreeItemCheckboxState.Checked]]});
+      assert.equal(first.enabled,true,'checkbox can re-enable auto restore');
+    }
+    console.log('PASS activation ordering and sidebar state: '+phase);
+    return;
+  }
   if (phase.startsWith('multi-')) {
     const providers = ['claude', 'agy'];
     const ids = ['c3c3c3c3-3333-4333-8333-333333333333', 'd4d4d4d4-4444-4444-8444-444444444444'];
@@ -28,8 +72,7 @@ exports.run = async function () {
       for (const entry of [...manager.entries]) await manager.remove(entry.id);
       for (const terminal of [...vscode.window.terminals]) terminal.dispose();
       await new Promise(resolve => setTimeout(resolve, 300));
-      const cli = path.join(data, "fake agent's cli");
-      providers.forEach((provider, index) => vscode.window.createTerminal({name: provider+' task', cwd:path.join(data,'workspace'), shellPath:cli, shellArgs:['hook',provider,ids[index]]}));
+      await Promise.all(providers.map((provider,index)=>launchOrdinaryAgent(provider+' task',['hook',provider,ids[index]])));
       await until(async()=> { await api.tracker.sample(); return manager.entries.length === 2; });
       assert.deepEqual(manager.entries.map(entry=>entry.provider).sort(), ['agy','claude']);
       assert.deepEqual(manager.entries.map(entry=>entry.sessionId).sort(), ids);
@@ -55,6 +98,7 @@ exports.run = async function () {
       await removeStartupShells(vscode, manager, [custom], () => {});
       assert.ok(vscode.window.terminals.includes(custom), 'a deliberately named user shell is preserved');
       custom.dispose();
+      await until(() => !vscode.window.terminals.includes(custom));
     }
     console.log('PASS Claude / AGY hook tracking: '+phase);
     return;
@@ -65,8 +109,7 @@ exports.run = async function () {
       for (const entry of [...manager.entries]) await manager.remove(entry.id);
       for (const terminal of [...vscode.window.terminals]) terminal.dispose();
       await new Promise(resolve => setTimeout(resolve, 300));
-      const cli = path.join(data, "fake agent's cli");
-      ids.forEach((id, index) => vscode.window.createTerminal({name: '普通终端 '+index, cwd:path.join(data,'workspace'), shellPath:cli, shellArgs:['capture',id]}));
+      await Promise.all(ids.map((id,index)=>launchOrdinaryAgent('Ordinary terminal '+index,['capture',id])));
       await until(async()=> { await api.tracker.sample(); return manager.entries.length === 2; });
       assert.ok(manager.entries.every(entry=>entry.automatic));
       assert.deepEqual(manager.entries.map(entry=>entry.sessionId).sort(), ids);
@@ -87,7 +130,7 @@ exports.run = async function () {
     assert.equal(manager.entries.length, 0);
     assert.equal(vscode.workspace.getConfiguration('terminal.integrated').get('hideOnStartup'), 'whenEmpty');
     assert.equal(vscode.window.terminals.length, 1, 'no saved agent creates exactly one normal shell');
-    assert.equal(vscode.window.activeTerminal, vscode.window.terminals[0]);
+    await until(() => vscode.window.activeTerminal === vscode.window.terminals[0]);
     for (const terminal of [...vscode.window.terminals]) terminal.dispose();
     await until(() => vscode.window.terminals.length === 0);
     const codex = await manager.add({ provider: 'codex', sessionId: 'codex-exact-id', cwd: path.join(data, 'workspace') }, '库存 Codex');

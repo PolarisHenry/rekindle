@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
+const { fileURLToPath, pathToFileURL } = require('node:url');
 
 function expandHome(value) {
   return value === '~' ? os.homedir() : value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
@@ -146,6 +147,45 @@ async function discoverSessions(provider, config = {}, warn = () => {}) {
   if (provider === 'pi') {
     const root = config.piHome ? path.join(expandHome(config.piHome), 'sessions') : process.env.PI_CODING_AGENT_SESSION_DIR || path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi/agent'), 'sessions');
     return discoverFiles('pi', root);
+  }
+  if (provider === 'claude') {
+    const root = config.claudeHome || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const files = (await jsonlFiles(path.join(root, 'projects'))).filter(item => !item.file.includes(`${path.sep}subagents${path.sep}`)).sort((a,b) => b.updatedAt-a.updatedAt).slice(0, 1500);
+    const sessions = [];
+    for (let i = 0; i < files.length; i += 24) {
+      const batch = await Promise.all(files.slice(i, i+24).map(async ({ file, updatedAt }) => {
+        try {
+          const { head, tail } = await readEdges(file);
+          const header = head.find(row => row.sessionId && path.isAbsolute(row.cwd || '') && !row.isSidechain);
+          if (!header) return null;
+          const custom = [...head,...tail].filter(row => row.type === 'custom-title').at(-1)?.customTitle;
+          const content = head.find(row => row.type === 'user' && row.message?.content)?.message.content;
+          const text = typeof content === 'string' ? content : content?.filter(item => item.type === 'text').map(item => item.text).join(' ');
+          return { provider, sessionId: header.sessionId, sessionFile: file, cwd: header.cwd, title: cleanTitle(custom || text || header.sessionId), updatedAt };
+        } catch { return null; }
+      }));
+      sessions.push(...batch.filter(Boolean));
+    }
+    return sessions;
+  }
+  if (provider === 'agy') {
+    const root = config.agyHome || path.join(os.homedir(), '.gemini/antigravity-cli');
+    const db = path.join(root, 'conversation_summaries.db');
+    const query = "SELECT conversation_id, title, workspace_uris, last_modified_time FROM conversation_summaries WHERE parent_conversation_id = '' ORDER BY last_modified_time DESC LIMIT 1500;";
+    let stdout;
+    try { ({ stdout } = await execFile('sqlite3', ['-readonly','-json',db,query], { timeout: 10000, maxBuffer: 4*1024*1024 })); }
+    catch {
+      try { ({ stdout } = await execFile('sqlite3', ['-json',pathToFileURL(db).href+'?mode=ro&immutable=1',query], { timeout: 10000, maxBuffer: 4*1024*1024 })); }
+      catch (error) { warn(`AGY history unavailable: ${error.message}`); return []; }
+    }
+    return JSON.parse(stdout || '[]').flatMap(row => {
+      try {
+        const workspace = JSON.parse(row.workspace_uris)?.[0];
+        const cwd = workspace?.startsWith('file:') ? fileURLToPath(workspace) : workspace;
+        if (!path.isAbsolute(cwd || '')) return [];
+        return [{ provider, sessionId: row.conversation_id, cwd, title: cleanTitle(row.title || row.conversation_id), updatedAt: Date.parse(row.last_modified_time) || 0 }];
+      } catch { return []; }
+    });
   }
   throw new Error('Unsupported agent provider');
 }

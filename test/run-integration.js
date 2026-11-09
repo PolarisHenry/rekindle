@@ -7,7 +7,7 @@ const path = require('node:path');
 async function main() {
   const root = path.resolve(__dirname, '..');
   const data = path.join(root, '.test-data');
-  await fs.rm(data, { recursive: true, force: true });
+  if (!process.env.REKINDLE_TEST_PHASES) await fs.rm(data, { recursive: true, force: true });
   for (const dir of ['workspace', 'user/User', 'extensions']) await fs.mkdir(path.join(data, dir), { recursive: true });
   const driver = path.join(data, 'extensions/local-tools.restore-integration-driver-0.0.1');
   await fs.mkdir(driver, { recursive: true });
@@ -21,6 +21,10 @@ async function main() {
     'agentSessionRestore.piCommand': cli,
     'agentSessionRestore.claudeCommand': cli,
     'agentSessionRestore.agyCommand': cli,
+    'agentSessionRestore.codexHome': path.join(data, 'codex'),
+    'agentSessionRestore.piHome': path.join(data, 'pi'),
+    'agentSessionRestore.claudeHome': path.join(data, 'claude'),
+    'agentSessionRestore.agyHome': path.join(data, 'agy'),
     'security.workspace.trust.enabled': false,
     'terminal.integrated.enablePersistentSessions': true,
     'terminal.integrated.shellIntegration.enabled': true,
@@ -28,14 +32,24 @@ async function main() {
     'telemetry.telemetryLevel': 'off',
     'workbench.startupEditor': 'none'
   }));
-  for (const phase of ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore']) {
+  const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore'];
+  for (const phase of phases) {
+    if (phase === 'environment-restore') {
+      const python = path.join(data, 'extensions/ms-python.vscode-python-envs-1.42.0');
+      await fs.mkdir(python, {recursive:true});
+      await fs.writeFile(path.join(python,'package.json'),JSON.stringify({name:'vscode-python-envs',publisher:'ms-python',version:'1.42.0',engines:{vscode:'^1.110.0'},main:'./index.cjs',activationEvents:['onStartupFinished']}));
+      await fs.writeFile(path.join(python,'index.cjs'),`module.exports=require(${JSON.stringify(path.join(__dirname,'fixtures/python-env-extension.cjs'))});`);
+      await fs.mkdir(path.join(data,'.venv/bin'),{recursive:true});
+      await fs.writeFile(path.join(data,'.venv/bin/activate'),'export REKINDLE_TEST_ENV=active\n');
+    }
     // --extensionTestsPath deliberately uses in-memory storage; a separate driver
     // extension exercises a normal application lifecycle and real workspace DB.
     await new Promise((resolve, reject) => {
       const env = { ...process.env, AGENT_RESTORE_TEST_PHASE: phase, AGENT_RESTORE_TEST_DATA: data };
       delete env.ELECTRON_RUN_AS_NODE;
       const child = spawn(process.env.VSCODE_EXECUTABLE_PATH || '/Applications/Visual Studio Code.app/Contents/MacOS/Code', [
-        path.join(data, 'workspace'), `--extensionDevelopmentPath=${root}`, '--user-data-dir', path.join(data, 'user'), '--extensions-dir', path.join(data, 'extensions'),
+        path.join(data, 'workspace'), `--extensionDevelopmentPath=${root}`,
+        ...(['environment-restore','disabled-restore'].includes(phase) ? [`--extensionDevelopmentPath=${path.join(data,'extensions/ms-python.vscode-python-envs-1.42.0')}`] : []), '--user-data-dir', path.join(data, 'user'), '--extensions-dir', path.join(data, 'extensions'),
         '--disable-updates', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-telemetry'
       ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       const log = createWriteStream(path.join(data, `${phase}.log`));

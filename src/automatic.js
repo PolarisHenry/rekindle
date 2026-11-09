@@ -4,7 +4,6 @@ const path = require('node:path');
 const os = require('node:os');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
-const { randomUUID } = require('node:crypto');
 const { installAgentBridges } = require('./bridges');
 
 const registry = path.join(os.homedir(), '.local/state/vscode-agent-session-restore/pi');
@@ -106,15 +105,10 @@ class AutomaticTracker {
         let id = this.terminalIds.get(terminal) || managedId || [...this.manager.live].find(([, live]) => live === terminal)?.[0];
         let entry = id && this.manager.entries.find(row => row.id === id);
         if (session) {
-          // A process report is accepted only through this terminal's actual process tree.
-          if (!entry) {
-            entry = { id: randomUUID(), automatic: true, createdAt: new Date().toISOString() };
-            this.manager.entries.push(entry);
-            this.terminalIds.set(terminal, entry.id);
-          }
-          const values = { provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: terminal.name, automatic: true, unresolved: false };
-          if (Object.keys(values).some(key => entry[key] !== values[key])) { Object.assign(entry, values); dirty = true; }
-          this.manager.live.set(entry.id, terminal);
+          const observed = this.manager.observe(session, terminal, id);
+          entry = observed.entry;
+          dirty ||= observed.dirty;
+          this.terminalIds.set(terminal, entry.id);
           this.missing.delete(entry.id);
         } else if (entry?.automatic) {
           // Leave mappings intact when an agent is still present but its exact session
@@ -125,9 +119,8 @@ class AutomaticTracker {
             const since = this.missing.get(entry.id) || Date.now();
             this.missing.set(entry.id, since);
             if (Date.now() - since > 10000) {
-              this.manager.entries = this.manager.entries.filter(row => row.id !== entry.id);
+              if (entry.enabled !== false) { entry.enabled = false; dirty = true; }
               this.manager.live.delete(entry.id);
-              dirty = true;
             }
           }
         }

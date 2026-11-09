@@ -73,3 +73,31 @@ test('Codex paginated history is discoverable from its read-only SQLite index', 
   assert.deepEqual(sessions.map(item => item.sessionId), ['paged-id']);
   assert.equal(sessions[0].title, '分页对话');
 });
+
+test('Claude history reads session IDs, folder metadata and custom titles', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-claude-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const dir = path.join(home, 'projects', '-workspace');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'claude-id.jsonl'), [
+    { type: 'last-prompt', sessionId: 'claude-id' },
+    { type: 'user', sessionId: 'claude-id', cwd: '/workspace', message: { content: 'First question' } },
+    { type: 'custom-title', customTitle: 'Named conversation' }
+  ].map(JSON.stringify).join('\n'));
+  const sessions = await discoverSessions('claude', { claudeHome: home });
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].sessionId, 'claude-id');
+  assert.equal(sessions[0].title, 'Named conversation');
+});
+
+test('AGY history reads root conversations and decodes workspace file URIs', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-agy-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  execFileSync('sqlite3', [path.join(home, 'conversation_summaries.db'), `CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,workspace_uris TEXT,last_modified_time TEXT,parent_conversation_id TEXT);
+    INSERT INTO conversation_summaries VALUES('agy-id','AGY history','["file:///work/my%20project"]','2026-11-09','');
+    INSERT INTO conversation_summaries VALUES('nested','Subagent','["file:///work"]','2026-11-09','agy-id');`]);
+  const sessions = await discoverSessions('agy', { agyHome: home });
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].sessionId, 'agy-id');
+  assert.equal(sessions[0].cwd, '/work/my project');
+});

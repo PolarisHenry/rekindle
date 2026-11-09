@@ -27,5 +27,5 @@ if (args[0] === 'hook') {
     env: { ...process.env, TERM_PROGRAM: 'vscode' }
   });
 }
-fs.appendFileSync(path.join(data, 'launches.jsonl'), JSON.stringify({ args, cwd: process.cwd(), id: process.env.AGENT_SESSION_RESTORE_ID }) + '\n');
+fs.appendFileSync(path.join(data, 'launches.jsonl'), JSON.stringify({ args, pythonEnv: process.env.REKINDLE_TEST_ENV, cwd: process.cwd(), id: process.env.AGENT_SESSION_RESTORE_ID }) + '\n');
 setInterval(() => {}, 1000);
