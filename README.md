@@ -12,7 +12,8 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Restores the exact conversation, rather than whichever session was used most recently.
 - Opens the Terminal panel and focuses the first successfully restored agent.
 - Preserves normal shell integration by launching the agent inside your regular shell.
-- Removes an untouched startup shell only after an agent is restored, and only if the shell has no child processes. With no agents to restore, the default shell stays.
+- Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
+- Observes the entire restoration phase and removes only untouched, idle startup shells.
 - Provides an English **Rekindle → Sessions** sidebar for inspecting or forgetting tracked sessions.
 
 ## Optional manual sessions

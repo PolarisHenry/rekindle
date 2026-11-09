@@ -85,6 +85,11 @@ exports.run = async function () {
   }
   if (phase === 'seed') {
     assert.equal(manager.entries.length, 0);
+    assert.equal(vscode.workspace.getConfiguration('terminal.integrated').get('hideOnStartup'), 'whenEmpty');
+    assert.equal(vscode.window.terminals.length, 1, 'no saved agent creates exactly one normal shell');
+    assert.equal(vscode.window.activeTerminal, vscode.window.terminals[0]);
+    for (const terminal of [...vscode.window.terminals]) terminal.dispose();
+    await until(() => vscode.window.terminals.length === 0);
     const codex = await manager.add({ provider: 'codex', sessionId: 'codex-exact-id', cwd: path.join(data, 'workspace') }, '库存 Codex');
     const pi = await manager.add({ provider: 'pi', sessionId: 'pi-exact-id', sessionFile: path.join(data, 'pi-session.jsonl'), cwd: path.join(data, 'workspace') }, '看板 pi');
     await Promise.all([manager.open(codex), manager.open(pi), manager.open(codex)]);

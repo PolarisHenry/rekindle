@@ -15,9 +15,13 @@ function activate(context) {
   };
   const log = message => output.appendLine(`[${new Date().toISOString()}] ${message}`);
   const manager = new SessionManager(vscode, context, log, refresh);
-  // Only consider shells present during initial activation, never shells the user
-  // deliberately opens later. Empty workspaces keep their normal default shell.
-  const startupShells = vscode.window.terminals.filter(unusedShell);
+  const startupShells = new Set(vscode.window.terminals.filter(unusedShell));
+  // VS Code may open its default shell after extension activation has begun.
+  // Observe the restoration phase, not just the initial terminal snapshot.
+  const startupListener = vscode.window.onDidOpenTerminal(terminal => {
+    if (!terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID) startupShells.add(terminal);
+  });
+  context.subscriptions.push(startupListener);
   const tracker = new AutomaticTracker(vscode, manager, log);
   context.subscriptions.push(tracker);
   const tree = {
@@ -117,10 +121,20 @@ function activate(context) {
 
   // Expose readiness for integration tests and other local extension tooling.
   const ready = (async () => {
-    if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length || manager.config().autoRestore === false) return;
-    await tracker.sample();
-    const failures = await manager.restore();
-    await removeStartupShells(vscode, manager, startupShells, log);
+    let failures;
+    try {
+      if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length || manager.config().autoRestore === false) return;
+      await tracker.sample();
+      failures = await manager.restore();
+      await removeStartupShells(vscode, manager, startupShells, log);
+      // hideOnStartup=whenEmpty prevents VS Code from creating a competing shell.
+      // If there were no agents (or every restore failed), keep normal terminal UX.
+      if (vscode.window.terminals.length === 0) vscode.window.createTerminal().show(false);
+      const first = manager.entries.map(entry => manager.live.get(entry.id)).find(terminal => terminal && terminal.exitStatus === undefined && vscode.window.terminals.includes(terminal));
+      if (first) first.show(false);
+    } finally {
+      startupListener.dispose();
+    }
     if (context.extensionMode !== vscode.ExtensionMode.Test && !process.env.AGENT_RESTORE_TEST_PHASE) {
       void tracker.start().catch(error => log(`Observer setup failed: ${error.message}`));
     }

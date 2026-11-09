@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Prevent VS Code from creating a default shell before agent restoration by contributing `hideOnStartup: whenEmpty`.
+- Create one normal shell when there are no restored terminals.
+- Watch terminal creation throughout restoration and refocus the first restored agent after cleanup.
+
 ## 0.3.1
 
 - Restore the optional **Add Session** sidebar action alongside automatic tracking.
