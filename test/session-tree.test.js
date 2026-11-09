@@ -21,3 +21,24 @@ test('history merges native conversations without duplicating tracked sessions',
   assert.equal(native.enabled, false);
   assert.equal(native.historyOnly, true);
 });
+
+test('workspace scope excludes unrelated folders without matching path prefixes', () => {
+  const groups = groupedSessions([row('a','/work/app'), row('b','/work/app/sub'), row('c','/work/application')], [], false, { workspaceFolders: ['/work/app'] });
+  assert.deepEqual(groups.flatMap(group => group.sessions.map(entry => entry.id)).sort(), ['a','b']);
+});
+
+test('all-folders mode still prioritizes the current terminal folder', () => {
+  const groups = groupedSessions([row('a','/aaa/other'), row('z','/work/z-project'), row('b','/work/app')], [], false, {
+    workspaceFolders: ['/work'], workspaceOnly: false, currentFolder: '/work/z-project'
+  });
+  assert.equal(groups[0].cwd, '/work/z-project');
+  assert.equal(groups.at(-1).cwd, '/aaa/other');
+});
+
+test('agent grouping combines providers and prioritizes their current-folder sessions', () => {
+  const tracked = [row('other','/work/other'), row('current','/work/current'), { ...row('claude','/work/current'), provider:'claude' }];
+  const groups = groupedSessions(tracked, [], false, { groupBy:'agent', workspaceFolders:['/work'], currentFolder:'/work/current' });
+  assert.equal(groups.length,2);
+  assert.ok(groups.every(group => group.kind==='agent'));
+  assert.equal(groups.find(group => group.provider==='pi').sessions[0].id,'current');
+});

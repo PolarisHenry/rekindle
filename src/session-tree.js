@@ -1,8 +1,10 @@
 'use strict';
 const path = require('node:path');
-const { sessionKey, discoverSessions } = require('./core');
+const { sessionKey, discoverSessions, isInWorkspace } = require('./core');
+const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
 
-function groupedSessions(tracked, history, showHistory) {
+function groupedSessions(tracked, history, showHistory, options = {}) {
+  const { groupBy = 'folder', workspaceFolders = [], workspaceOnly = true, currentFolder } = options;
   const rows = new Map(tracked.map(entry => [sessionKey(entry), entry]));
   if (showHistory) for (const row of history) {
     if (!rows.has(sessionKey(row))) rows.set(sessionKey(row), {
@@ -10,15 +12,27 @@ function groupedSessions(tracked, history, showHistory) {
       enabled: false, historyOnly: true
     });
   }
-  const folders = new Map();
+  const priority = entry => {
+    const cwd = path.resolve(entry.cwd);
+    if (currentFolder && cwd === path.resolve(currentFolder)) return 0;
+    if (currentFolder && (isInWorkspace(cwd, [currentFolder]) || isInWorkspace(currentFolder, [cwd]))) return 1;
+    return isInWorkspace(cwd, workspaceFolders) ? 2 : 3;
+  };
+  const groups = new Map();
   for (const entry of rows.values()) {
     if (!showHistory && entry.enabled === false) continue;
+    if (workspaceOnly && workspaceFolders.length && !isInWorkspace(entry.cwd, workspaceFolders)) continue;
     const cwd = path.resolve(entry.cwd);
-    if (!folders.has(cwd)) folders.set(cwd, { kind: 'folder', cwd, sessions: [] });
-    folders.get(cwd).sessions.push(entry);
+    const key = groupBy === 'agent' ? entry.provider : cwd;
+    if (!groups.has(key)) groups.set(key, groupBy === 'agent'
+      ? { kind: 'agent', provider: entry.provider, sessions: [] }
+      : { kind: 'folder', cwd, sessions: [] });
+    groups.get(key).sessions.push(entry);
   }
-  for (const folder of folders.values()) folder.sessions.sort((a,b) => Number(b.enabled !== false)-Number(a.enabled !== false) || a.name.localeCompare(b.name));
-  return [...folders.values()].sort((a,b) => a.cwd.localeCompare(b.cwd));
+  for (const group of groups.values()) group.sessions.sort((a,b) => priority(a)-priority(b) || Number(b.enabled !== false)-Number(a.enabled !== false) || a.name.localeCompare(b.name));
+  const rank = group => Math.min(...group.sessions.map(priority));
+  const label = group => group.kind === 'folder' ? group.cwd : AGENT_NAMES[group.provider] || group.provider;
+  return [...groups.values()].sort((a,b) => rank(a)-rank(b) || label(a).localeCompare(label(b)));
 }
 
 class SessionTree {
@@ -28,19 +42,60 @@ class SessionTree {
     this.context = context;
     this.log = log;
     this.showHistory = context.workspaceState.get('rekindle.showHistory', false);
-    this.filter = { kind: 'filter' };
+    this.groupBy = context.workspaceState.get('rekindle.groupBy', 'folder') === 'agent' ? 'agent' : 'folder';
+    this.workspaceOnly = context.workspaceState.get('rekindle.workspaceOnly', true);
     this.events = new vscode.EventEmitter();
     this.onDidChangeTreeData = this.events.event;
     this.history = [];
     this.loadedAt = 0;
+    void this.syncContext();
   }
 
   refresh() { this.events.fire(); }
 
+  attachView(view) { this.view = view; void this.syncContext(); }
+
+  async syncContext() {
+    if (this.view) this.view.description = `${this.groupBy === 'folder' ? 'By Folder' : 'By Agent'} · ${this.workspaceOnly ? 'Workspace' : 'All Folders'} · ${this.showHistory ? 'History' : 'Enabled'}`;
+    await Promise.all([
+      ['rekindle.showHistory', this.showHistory],
+      ['rekindle.groupBy', this.groupBy],
+      ['rekindle.workspaceOnly', this.workspaceOnly]
+    ].map(([key, value]) => this.vscode.commands?.executeCommand('setContext', key, value)));
+  }
+
   async setShowHistory(value) {
     this.showHistory = value;
     await this.context.workspaceState.update('rekindle.showHistory', value);
+    await this.syncContext();
     this.refresh();
+  }
+
+  async setGrouping(value) {
+    if (!['folder','agent'].includes(value)) throw new Error('Unknown grouping mode.');
+    this.groupBy = value;
+    await this.context.workspaceState.update('rekindle.groupBy', value);
+    await this.syncContext();
+    this.refresh();
+  }
+
+  async setWorkspaceOnly(value) {
+    this.workspaceOnly = value;
+    await this.context.workspaceState.update('rekindle.workspaceOnly', value);
+    await this.syncContext();
+    this.refresh();
+  }
+
+  displayOptions() {
+    const cwd = this.vscode.window.activeTerminal?.shellIntegration?.cwd;
+    const editor = this.vscode.window.activeTextEditor?.document?.uri;
+    const currentFolder = cwd?.scheme === 'file' ? cwd.fsPath : editor?.scheme === 'file' ? path.dirname(editor.fsPath) : undefined;
+    return {
+      groupBy: this.groupBy,
+      workspaceOnly: this.workspaceOnly,
+      workspaceFolders: this.vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath) || [],
+      currentFolder
+    };
   }
 
   async loadHistory(force = false) {
@@ -59,40 +114,34 @@ class SessionTree {
   }
 
   async getChildren(node) {
-    if (node?.kind === 'folder') return node.sessions;
+    if (node?.kind === 'folder' || node?.kind === 'agent') return node.sessions;
     if (node) return [];
     if (this.showHistory) await this.loadHistory();
-    return [this.filter, ...groupedSessions(this.manager.entries, this.history, this.showHistory)];
+    const groups = groupedSessions(this.manager.entries, this.history, this.showHistory, this.displayOptions());
+    if (this.view) this.view.message = groups.length ? undefined : 'No matching sessions. Use the … menu to show history or all folders.';
+    return groups;
   }
 
   getTreeItem(node) {
     const v = this.vscode;
-    if (node.kind === 'filter') {
-      const item = new v.TreeItem('Show history', v.TreeItemCollapsibleState.None);
-      item.id = 'rekindle:history-filter';
-      item.checkboxState = this.showHistory ? v.TreeItemCheckboxState.Checked : v.TreeItemCheckboxState.Unchecked;
-      item.tooltip = 'Include paused sessions and conversations saved by your agent CLIs.';
-      item.contextValue = 'historyFilter';
-      return item;
-    }
-    if (node.kind === 'folder') {
+    if (node.kind === 'folder' || node.kind === 'agent') {
       const enabled = node.sessions.filter(entry => entry.enabled !== false).length;
-      const item = new v.TreeItem(path.basename(node.cwd) || node.cwd, enabled ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
-      item.id = `folder:${node.cwd}`;
+      const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, enabled ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
+      item.id = node.kind === 'folder' ? `folder:${node.cwd}` : `agent:${node.provider}`;
       item.description = `${enabled} enabled · ${node.sessions.length} sessions`;
-      item.tooltip = node.cwd;
-      item.iconPath = new v.ThemeIcon('folder');
-      item.contextValue = 'sessionFolder';
+      item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
+      item.iconPath = new v.ThemeIcon(node.kind === 'folder' ? 'folder' : 'hubot');
+      item.contextValue = node.kind === 'folder' ? 'sessionFolder' : 'sessionAgent';
       return item;
     }
     const running = this.manager.live.get(node.id);
     const enabled = node.enabled !== false;
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
     item.id = `session:${sessionKey(node)}`;
-    item.description = `${node.provider} · ${enabled ? 'Enabled' : 'History'}${running && v.window.terminals.includes(running) ? ' · Running' : ''}`;
+    item.description = `${this.groupBy === 'agent' ? path.basename(node.cwd) : node.provider} · ${enabled ? 'Enabled' : 'History'}${running && v.window.terminals.includes(running) ? ' · Running' : ''}`;
     item.checkboxState = enabled ? v.TreeItemCheckboxState.Checked : v.TreeItemCheckboxState.Unchecked;
     item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}\nClick to open. Check to enable automatic restoration.`;
-    item.iconPath = new v.ThemeIcon(enabled ? 'terminal' : 'history');
+    item.iconPath = new v.ThemeIcon('terminal');
     item.contextValue = node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession';
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;
@@ -101,8 +150,7 @@ class SessionTree {
   async checked(event) {
     for (const [node, state] of event.items) {
       const enabled = state === this.vscode.TreeItemCheckboxState.Checked;
-      if (node.kind === 'filter') await this.setShowHistory(enabled);
-      else if (!node.kind) {
+      if (!node.kind) {
         const entry = await this.ensureTracked(node);
         await this.manager.setEnabled(entry.id, enabled);
       }

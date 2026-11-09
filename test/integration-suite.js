@@ -34,7 +34,7 @@ exports.run = async function () {
     const first = manager.entries[0];
     const second = manager.entries[1];
     const root = await api.tree.getChildren();
-    assert.equal(root[0].kind, 'filter');
+    assert.ok(root.every(node=>node.kind==='folder'||node.kind==='agent'),'root contains only actual groups');
     if (phase === 'environment-restore') {
       assert.ok(vscode.extensions.getExtension('ms-python.vscode-python-envs'), 'simulated Python API provider is available');
       await until(async()=> {
@@ -49,11 +49,21 @@ exports.run = async function () {
       assert.equal(enabledFolders.flatMap(folder=>folder.sessions).length,1);
       api.tree.history=[];
       api.tree.loadedAt=Date.now();
-      await api.tree.checked({items:[[api.tree.filter,vscode.TreeItemCheckboxState.Checked]]});
+      await vscode.commands.executeCommand('agentSessionRestore.showHistory');
       const allFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
       assert.equal(allFolders.flatMap(folder=>folder.sessions).length,2,'Show history reveals the paused conversation');
+      await vscode.commands.executeCommand('agentSessionRestore.groupByAgent');
+      assert.ok((await api.tree.getChildren()).every(node=>node.kind==='agent'));
+      assert.ok(api.view.description.startsWith('By Agent'));
+      await vscode.commands.executeCommand('agentSessionRestore.showAllFolders');
+      assert.equal(api.tree.workspaceOnly,false);
+      await vscode.commands.executeCommand('agentSessionRestore.workspaceOnly');
+      assert.equal(api.tree.workspaceOnly,true);
     } else {
       assert.equal(first.enabled,false,'disabled flag persisted across application restart');
+      assert.equal(api.tree.groupBy,'agent','grouping persists across restart');
+      assert.equal(api.tree.workspaceOnly,true,'workspace scope persists across restart');
+      assert.equal(api.tree.showHistory,true,'history menu choice persists across restart');
       assert.equal(vscode.window.terminals.length,1,'only the enabled conversation was restored');
       assert.equal(vscode.window.activeTerminal,manager.live.get(second.id));
       await manager.open(first);
@@ -158,6 +168,7 @@ exports.run = async function () {
   await until(() => vscode.window.activeTerminal === manager.live.get(manager.entries[0].id));
   for (const terminal of vscode.window.terminals) {
     assert.equal(terminal.creationOptions.isTransient, true);
+    assert.equal(terminal.creationOptions.iconPath.id, 'terminal', 'agent tabs use the normal terminal icon');
     assert.equal(terminal.creationOptions.shellArgs, undefined, 'resume command must not replace the shell startup');
     assert.ok(terminal.shellIntegration, 'restored terminal retains VS Code shell integration');
     terminal.dispose();

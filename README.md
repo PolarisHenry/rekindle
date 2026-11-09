@@ -14,7 +14,7 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Preserves normal shell integration by launching the agent inside your regular shell.
 - Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
 - Observes the entire restoration phase and removes only untouched, idle startup shells.
-- Provides an English **Rekindle → Sessions** sidebar grouped by working folder. By default, it shows only sessions with automatic restore enabled.
+- Provides an English **Rekindle → Sessions** sidebar grouped by folder or agent. By default, it shows enabled sessions in the current workspace, prioritizing the current terminal folder.
 
 ## Optional manual sessions
 
@@ -47,11 +47,17 @@ The package identifier and settings namespace remain `local-tools.agent-session-
 
 ## Sidebar and history
 
-Sessions are grouped by their working folder. The **Show history** checkbox includes paused records and saved local conversations from Codex, pi, Claude Code, and AGY. It is off by default and remembered per workspace. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
+Open the Sessions header's **…** menu for view options:
+
+- **Show History / Hide History:** include paused records and saved local conversations from Codex, pi, Claude Code, and AGY. Off by default.
+- **Show All Folders / Current Workspace Only:** restrict the list to the open workspace folders by default, or browse conversations from other projects.
+- **Group By → By Folder / By Agent:** switch between project-folder groups and agent-provider groups.
+
+The current terminal folder is prioritized, followed by other workspace folders and then external folders when enabled. View choices are remembered per workspace and shown in the view description. These display filters do not change which enabled sessions restore at startup. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
 
 - **Session checkbox / Enable Auto Restore / Disable Auto Restore:** controls restoration on the next workspace startup. Disabling does not stop a running agent.
 - **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
-- **Show history:** reveals disabled sessions so they can be opened or enabled again.
+- **… → Show History:** reveals disabled sessions so they can be opened or enabled again.
 - Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
 
 ## Python environment activation
@@ -67,6 +73,8 @@ Closing VS Code preserves tracked sessions. Reopening the same workspace restore
 Deleting a terminal using its trash button disables its automatic restore and retains it in history. Exiting an agent back to a regular shell archives its record after roughly ten seconds. **Forget Session** removes Rekindle's mapping without deleting the native CLI conversation; native history can still show that conversation.
 
 ## Settings
+
+Restored agent tabs use the standard terminal icon.
 
 The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 

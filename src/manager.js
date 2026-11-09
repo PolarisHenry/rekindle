@@ -121,7 +121,7 @@ class SessionManager {
         const bound = new Set(this.live.values());
         revived = this.vscode.window.terminals.find(terminal => !bound.has(terminal) && terminal.name === entry.name && terminal.exitStatus === undefined);
       }
-      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: new this.vscode.ThemeIcon('history') }, this.log, undefined, revived);
+      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: new this.vscode.ThemeIcon('terminal') }, this.log, undefined, revived);
       this.live.set(entry.id, terminal);
       await this.startInShell(terminal, entry);
       if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);

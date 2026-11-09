@@ -30,6 +30,8 @@ function activate(context) {
     treeDataProvider: sessionTree,
     manageCheckboxStateManually: true
   });
+  sessionTree.attachView(view);
+  context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(() => sessionTree.refresh()), vscode.window.onDidChangeActiveTextEditor(() => sessionTree.refresh()));
   context.subscriptions.push(output, sessionTree, view, view.onDidChangeCheckboxState(event => {
     void sessionTree.checked(event).catch(error => { log(error.message); void vscode.window.showErrorMessage(`Rekindle: ${error.message}`); });
   }));
@@ -107,6 +109,12 @@ function activate(context) {
   });
   command('enable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, true); });
   command('disable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, false); });
+  command('showHistory', () => sessionTree.setShowHistory(true));
+  command('hideHistory', () => sessionTree.setShowHistory(false));
+  command('groupByFolder', () => sessionTree.setGrouping('folder'));
+  command('groupByAgent', () => sessionTree.setGrouping('agent'));
+  command('showAllFolders', () => sessionTree.setWorkspaceOnly(false));
+  command('workspaceOnly', () => sessionTree.setWorkspaceOnly(true));
   command('refreshHistory', async () => { await sessionTree.loadHistory(true); sessionTree.refresh(); });
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {

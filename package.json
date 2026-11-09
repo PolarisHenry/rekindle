@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -36,47 +36,88 @@
     "commands": [
       {
         "command": "agentSessionRestore.add",
-        "title": "Rekindle: Add Session",
-        "icon": "$(add)"
+        "title": "Add Session",
+        "icon": "$(add)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.restore",
-        "title": "Rekindle: Restore Enabled Sessions",
-        "icon": "$(debug-restart)"
+        "title": "Restore Enabled Sessions",
+        "icon": "$(debug-restart)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.open",
-        "title": "Rekindle: Open Session",
-        "icon": "$(terminal)"
+        "title": "Open Session",
+        "icon": "$(terminal)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.rename",
-        "title": "Rekindle: Rename Terminal",
-        "icon": "$(edit)"
+        "title": "Rename Terminal",
+        "icon": "$(edit)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.remove",
-        "title": "Rekindle: Forget Session",
-        "icon": "$(close)"
+        "title": "Forget Session",
+        "icon": "$(close)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.logs",
-        "title": "Rekindle: Show Logs"
+        "title": "Show Logs",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.enable",
-        "title": "Rekindle: Enable Auto Restore",
-        "icon": "$(play)"
+        "title": "Enable Auto Restore",
+        "icon": "$(play)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.disable",
-        "title": "Rekindle: Disable Auto Restore",
-        "icon": "$(debug-pause)"
+        "title": "Disable Auto Restore",
+        "icon": "$(debug-pause)",
+        "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.refreshHistory",
-        "title": "Rekindle: Refresh History",
-        "icon": "$(refresh)"
+        "title": "Refresh History",
+        "icon": "$(refresh)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.showHistory",
+        "title": "Show History",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.hideHistory",
+        "title": "Hide History",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.groupByFolder",
+        "title": "By Folder",
+        "category": "Rekindle",
+        "enablement": "rekindle.groupBy != folder"
+      },
+      {
+        "command": "agentSessionRestore.groupByAgent",
+        "title": "By Agent",
+        "category": "Rekindle",
+        "enablement": "rekindle.groupBy != agent"
+      },
+      {
+        "command": "agentSessionRestore.showAllFolders",
+        "title": "Show All Folders",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.workspaceOnly",
+        "title": "Current Workspace Only",
+        "category": "Rekindle"
       }
     ],
     "viewsContainers": {
@@ -119,6 +160,31 @@
           "command": "agentSessionRestore.refreshHistory",
           "when": "view == agentSessionRestore.sessions",
           "group": "navigation@3"
+        },
+        {
+          "command": "agentSessionRestore.showHistory",
+          "when": "view == agentSessionRestore.sessions && !rekindle.showHistory",
+          "group": "1_view@1"
+        },
+        {
+          "command": "agentSessionRestore.hideHistory",
+          "when": "view == agentSessionRestore.sessions && rekindle.showHistory",
+          "group": "1_view@1"
+        },
+        {
+          "command": "agentSessionRestore.showAllFolders",
+          "when": "view == agentSessionRestore.sessions && rekindle.workspaceOnly",
+          "group": "1_view@2"
+        },
+        {
+          "command": "agentSessionRestore.workspaceOnly",
+          "when": "view == agentSessionRestore.sessions && !rekindle.workspaceOnly",
+          "group": "1_view@2"
+        },
+        {
+          "submenu": "rekindle.groupBy",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "2_grouping@1"
         }
       ],
       "view/item/context": [
@@ -146,6 +212,16 @@
           "command": "agentSessionRestore.disable",
           "when": "view == agentSessionRestore.sessions && viewItem == enabledSession",
           "group": "inline@2"
+        }
+      ],
+      "rekindle.groupBy": [
+        {
+          "command": "agentSessionRestore.groupByFolder",
+          "group": "1_group@1"
+        },
+        {
+          "command": "agentSessionRestore.groupByAgent",
+          "group": "1_group@2"
         }
       ]
     },
@@ -209,7 +285,13 @@
     },
     "configurationDefaults": {
       "terminal.integrated.hideOnStartup": "whenEmpty"
-    }
+    },
+    "submenus": [
+      {
+        "id": "rekindle.groupBy",
+        "label": "Group By"
+      }
+    ]
   },
   "icon": "media/icon.png",
   "repository": {

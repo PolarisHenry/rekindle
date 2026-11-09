@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Default the sidebar to current-workspace sessions and prioritize the current terminal folder.
+- Add folder and agent grouping modes with workspace-persistent view preferences.
+- Move history and folder-scope options into the Sessions overflow menu, with a Group By submenu.
+- Use normal terminal icons for restored agent tabs instead of history-clock icons.
+
 ## 0.4.0
 
 - Group sidebar sessions by working folder, with a persisted Show history checkbox.
