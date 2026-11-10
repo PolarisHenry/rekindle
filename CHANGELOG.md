@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+
+- Reuse an explicitly selected Folder/Explorer path when creating a new session, without reopening the directory picker.
+- Clarify that the provider brand icon cannot rotate through the public Terminal API; task activity remains a separate native progress status.
+
 ## 0.8.2
 
 - Show supported agent busy/idle state in terminal tabs using OSC 9;4 progress on the exact terminal TTY and VS Code's `${progress}` description variable.

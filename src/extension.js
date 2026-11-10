@@ -5,7 +5,7 @@ const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd } = requi
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
 const { pickConversation } = require('./session-picker');
-const { resolveAddContext, chooseProvider, dispatchAddHere } = require('./session-add');
+const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory } = require('./session-add');
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 
@@ -80,7 +80,7 @@ function activate(context) {
         sessionId = await vscode.window.showInputBox({ title: `Add ${provider.label} Session`, prompt: 'Enter the exact ID of an existing saved conversation.', validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? 'Enter a valid saved session ID.' : undefined });
         if (!sessionId) return;
       }
-      const cwd = await chooseDirectory(folders, suggested);
+      const cwd = await resolveWorkingDirectory({ cwd: addContext.cwd, folders, suggested, chooseDirectory });
       if (!cwd) return;
       session = { provider: provider.value, sessionId: sessionId?.trim(), cwd, title: sessionId?.trim() || 'New Session' };
     }
