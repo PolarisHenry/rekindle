@@ -77,6 +77,79 @@ exports.run = async function () {
     console.log('PASS independent new conversation with similar Chinese names');
     return;
   }
+  if (phase === 'features-seed') {
+    const cwd=path.join(data,'workspace');
+    const previousLaunches=(await fs.readFile(path.join(data,'launches.jsonl'),'utf8')).trim().split('\n').filter(Boolean).length;
+    const feature=await manager.add({provider:'claude',sessionId:'feature-claude-exact-id',cwd,updatedAt:Date.now()-86400000},'Feature Claude');
+    await manager.setSessionArguments(feature.id,['--model','feature-model']);
+    await manager.setFavorite(feature.id,true);
+    await manager.setEnabled(feature.id,false);
+    const other=manager.entries.find(entry=>entry.id!==feature.id);
+    const otherTerminal=other&&manager.live.get(other.id);
+    await manager.open(feature);
+    await until(async()=>{
+      const rows=(await fs.readFile(path.join(data,'launches.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+      return rows.some(row=>row.args.includes('--model')&&row.args[row.args.indexOf('--model')+1]==='feature-model'&&!row.args.includes('--permission-mode')&&row.args.includes('--resume')&&row.args[row.args.indexOf('--resume')+1]===feature.sessionId);
+    });
+    const beforeRestart=(await fs.readFile(path.join(data,'launches.jsonl'),'utf8')).trim().split('\n').filter(Boolean).length;
+    await vscode.commands.executeCommand('agentSessionRestore.restart',feature);
+    await until(async()=>{
+      const rows=(await fs.readFile(path.join(data,'launches.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+      return rows.length>beforeRestart&&rows.at(-1).args.includes('--resume')&&rows.at(-1).args.at(-1)===feature.sessionId;
+    });
+    assert.equal(feature.enabled,false,'explicit Restart preserves disabled auto-restore');
+    assert.equal(feature.favorite,true);
+    assert.deepEqual(feature.sessionArguments,['--model','feature-model']);
+    assert.ok(otherTerminal&&vscode.window.terminals.includes(otherTerminal),'Restart affects only the selected terminal');
+
+    const old=await manager.add({provider:'codex',sessionId:'feature-old-history',cwd,updatedAt:Date.now()-40*86400000},'Old history',false);
+    const recent=await manager.add({provider:'codex',sessionId:'feature-recent-history',cwd,updatedAt:Date.now()-2*86400000},'Recent history',false);
+    await api.tree.setShowHistory(true);
+    await api.tree.setHistoryRange(7);
+    const withinSeven=(await api.tree.getChildren()).flatMap(group=>group.sessions);
+    assert.ok(withinSeven.some(entry=>entry.sessionId===recent.sessionId));
+    assert.ok(!withinSeven.some(entry=>entry.sessionId===old.sessionId));
+    await api.tree.setHistoryRange('all');
+    assert.ok((await api.tree.getChildren()).flatMap(group=>group.sessions).some(entry=>entry.sessionId===old.sessionId));
+    await manager.hideFromHistory(old);
+    assert.ok(!(await api.tree.getChildren()).flatMap(group=>group.sessions).some(entry=>entry.sessionId===old.sessionId));
+    await manager.resetHiddenHistory();
+    assert.ok((await api.tree.getChildren()).flatMap(group=>group.sessions).some(entry=>entry.sessionId===old.sessionId));
+    await manager.hideFromHistory(old);
+    await api.tree.setHistoryRange(7);
+
+    await api.tree.setGrouping('folder');
+    const folders=await api.tree.getChildren();
+    assert.ok(folders.length);
+    await api.tree.setExpanded(folders[0],false);
+    await api.tree.setGrouping('agent');
+    const agents=await api.tree.getChildren();
+    assert.ok(agents.length);
+    await api.tree.setExpanded(agents[0],true);
+    await api.tree.setGrouping('folder');
+    console.log('PASS feature state seed: session args, restart isolation, favorites, range, tombstones, grouping expansion.');
+    return;
+  }
+  if (phase === 'features-reopen') {
+    const feature=manager.entries.find(entry=>entry.sessionId==='feature-claude-exact-id');
+    assert.ok(feature,'feature session persisted across VS Code restart');
+    assert.equal(feature.enabled,false);
+    assert.equal(feature.favorite,true);
+    assert.deepEqual(feature.sessionArguments,['--model','feature-model']);
+    assert.equal(api.tree.historyRangeDays,7);
+    assert.ok(manager.hiddenHistory.has('codex:feature-old-history'));
+    assert.equal(manager.live.has(feature.id),false,'disabled feature session is not automatically restored');
+    assert.equal(api.tree.groupBy,'folder');
+    const folders=await api.tree.getChildren();
+    assert.equal(api.tree.expandedGroups.get(folders[0].groupId),false);
+    await api.tree.setGrouping('agent');
+    const agents=await api.tree.getChildren();
+    assert.equal(api.tree.expandedGroups.get(agents[0].groupId),true);
+    const oldTerminal=vscode.window.terminals.find(terminal=>terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID===feature.id);
+    assert.equal(oldTerminal,undefined);
+    console.log('PASS feature state reopen: overrides, hidden history, range, favorites, and expansion survive without restore.');
+    return;
+  }
   if (phase === 'environment-restore' || phase === 'disabled-restore') {
     assert.equal(manager.entries.length, 2);
     const first = manager.entries[0];
@@ -149,7 +222,10 @@ exports.run = async function () {
       assert.equal(vscode.window.terminals.length,1,'only the enabled conversation was restored');
       assert.equal(vscode.window.activeTerminal,manager.live.get(second.id));
       await manager.open(first);
-      assert.equal(vscode.window.terminals.length,2,'history can be opened once');
+      assert.equal(vscode.window.terminals.length,2,'opening history creates only its one selected terminal');
+      assert.ok(manager.live.get(first.id),'history can be opened once');
+      assert.equal(vscode.window.terminals.filter(terminal=>terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID===first.id).length,1,'history opening binds one terminal to its exact session');
+      assert.ok(vscode.window.terminals.includes(manager.live.get(second.id)),'opening history leaves the enabled session alive');
       assert.equal(first.enabled,false,'opening history does not silently enable auto restore');
       await vscode.commands.executeCommand('agentSessionRestore.enable',first);
       assert.equal(first.enabled,true,'explicit action can re-enable auto restore');
@@ -174,7 +250,7 @@ exports.run = async function () {
       await until(async()=> {
         const text=await fs.readFile(path.join(data,'launches.jsonl'),'utf8');
         const launches=text.trim().split('\n').map(JSON.parse);
-        return launches.some(item=>item.args[0]==='--resume' && item.args[1]===ids[0])
+        return launches.some(item=>item.args.includes('--resume') && item.args[item.args.indexOf('--resume')+1]===ids[0])
           && launches.some(item=>item.args[0]==='--conversation' && item.args[1]===ids[1]);
       });
       await until(() => vscode.window.activeTerminal === manager.live.get(manager.entries[0].id));

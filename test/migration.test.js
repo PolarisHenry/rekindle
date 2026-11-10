@@ -39,7 +39,7 @@ function fixture({ oldSeed = {}, newSeed = {}, oldVersion = '0.8.5', workspaceOv
 
 test('passive legacy API exports only whitelisted session metadata and view preferences', () => {
   const terminal = { shellPid: 123, sendText() {} };
-  const entry = { id: 'stable-id', provider: 'codex', sessionId: 'session-id', cwd: '/work', name: 'Renamed', customName: true, enabled: false, archived: true, createdAt: 'date', terminal, prompt: 'never export', credential: 'secret' };
+  const entry = { id: 'stable-id', provider: 'codex', sessionId: 'session-id', cwd: '/work', name: 'Renamed', customName: true, enabled: false, archived: true, favorite: true, lastActivityAt: 1234, lastOpenedAt: 5678, sessionArguments: ['--model', 'o3'], createdAt: 'date', terminal, prompt: 'never export', credential: 'secret' };
   const fx = fixture({ oldSeed: {
     [STORAGE_KEY]: [entry],
     'rekindle.showHistory': true,
@@ -51,12 +51,27 @@ test('passive legacy API exports only whitelisted session metadata and view pref
   assert.equal(snapshot.sessions[0].id, 'stable-id');
   assert.equal(snapshot.sessions[0].enabled, false);
   assert.equal(snapshot.sessions[0].customName, true);
+  assert.equal(snapshot.sessions[0].favorite, true);
+  assert.equal(snapshot.sessions[0].lastActivityAt, 1234);
+  assert.deepEqual(snapshot.sessions[0].sessionArguments, ['--model', 'o3']);
   assert.equal('terminal' in snapshot.sessions[0], false);
   assert.equal('prompt' in snapshot.sessions[0], false);
   assert.equal('credential' in snapshot.sessions[0], false);
   assert.deepEqual(snapshot.preferences, {
     'rekindle.showHistory': true, 'rekindle.groupBy': 'agent', 'rekindle.workspaceOnly': false
   });
+});
+
+test('migration accepts only a string-array session override and ignores runtime objects', () => {
+  const fx=fixture({oldSeed:{[STORAGE_KEY]:[
+    {id:'safe',provider:'pi',sessionId:'safe-id',cwd:'/work',name:'Safe',sessionArguments:['--model','x'],lastOpenedAt:123,terminal:{runtime:true}},
+    {id:'bad',provider:'pi',sessionId:'bad-id',cwd:'/work',name:'Bad',sessionArguments:['--model',{}]}
+  ]}});
+  const rows=fx.api.getMigrationSnapshot().sessions;
+  assert.deepEqual(rows.find(entry=>entry.id==='safe').sessionArguments,['--model','x']);
+  assert.equal(rows.find(entry=>entry.id==='safe').lastOpenedAt,123);
+  assert.equal(rows.find(entry=>entry.id==='bad').sessionArguments,undefined);
+  assert.equal(rows.some(entry=>'terminal' in entry),false);
 });
 
 test('new identity imports matching workspace once, preserving disabled flags and preferences', async () => {

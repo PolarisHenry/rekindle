@@ -2,7 +2,7 @@
 
 const fs = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
-const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArguments } = require('./core');
+const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArguments, normalizeTimestamp } = require('./core');
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
 const { retireIdleTerminal } = require('./startup');
 const { agentIcon } = require('./agent-icons');
@@ -18,7 +18,10 @@ class SessionManager {
     this.pending = new Map();
     this.live = new Map();
     this.working = new Set();
+    this.status = new Map();
+    this.hiddenHistory = new Set(context.workspaceState.get('rekindle.hiddenHistory.v1', []));
     this.opening = new Map();
+    this.restarting = new Set();
     this.writes = Promise.resolve();
     this.shellGate = new ShellGate(vscode);
     context.subscriptions?.push(this.shellGate);
@@ -36,6 +39,12 @@ class SessionManager {
     return Object.fromEntries(['autoRestore', 'codexCommand', 'piCommand', 'claudeCommand', 'agyCommand', 'codexArguments', 'piArguments', 'claudeArguments', 'agyArguments', 'codexHome', 'piHome', 'claudeHome', 'agyHome'].map(key => [key, c.get(key)]));
   }
 
+  configFor(entry) {
+    const config = this.config();
+    if (Array.isArray(entry.sessionArguments)) config[`${entry.provider}Arguments`] = [...entry.sessionArguments];
+    return config;
+  }
+
   async save() {
     const snapshot = this.entries.map(entry => ({ ...entry }));
     this.writes = this.writes.catch(() => {}).then(() => this.context.workspaceState.update(STORAGE_KEY, snapshot));
@@ -44,15 +53,29 @@ class SessionManager {
   }
 
   async add(session, name, enabled = true) {
+    if (this.hiddenHistory.delete(sessionKey(session))) await this.context.workspaceState.update('rekindle.hiddenHistory.v1', [...this.hiddenHistory]);
     const existing = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
     if (existing) {
+      let dirty = false;
       // Adding a conversation that is already tracked is an explicit rename/update,
       // never a silent no-op. Preserve its restore setting and stable identity.
-      if (name && (existing.name !== name || !existing.customName)) { existing.name = name; existing.customName = true; await this.save(); }
+      if (name && (existing.name !== name || !existing.customName)) { existing.name = name; existing.customName = true; dirty = true; }
+      const activityAt = normalizeTimestamp(session.lastActivityAt ?? session.updatedAt);
+      if (activityAt && activityAt > (existing.lastActivityAt || 0)) {
+        existing.lastActivityAt = activityAt;
+        delete existing.activityUnknown;
+        dirty = true;
+      }
+      if (dirty) await this.save();
       return existing;
     }
     const entry = { id: randomUUID(), provider: session.provider, sessionId: session.sessionId,
-      sessionFile: session.sessionFile, cwd: session.cwd, name, customName: true, enabled, createdAt: new Date().toISOString() };
+      sessionFile: session.sessionFile, cwd: session.cwd, name, customName: true, enabled,
+      favorite: session.favorite === true,
+      ...(Array.isArray(session.sessionArguments) ? { sessionArguments: [...session.sessionArguments] } : {}),
+      lastActivityAt: normalizeTimestamp(session.lastActivityAt ?? session.updatedAt) || undefined,
+      ...(session.updatedAt == null && session.lastActivityAt == null ? { activityUnknown: true } : {}),
+      createdAt: new Date().toISOString() };
     this.entries.push(entry);
     await this.save();
     return entry;
@@ -64,6 +87,76 @@ class SessionManager {
     entry.enabled = enabled;
     entry.archived = false;
     await this.save();
+  }
+
+  async setFavorite(id, favorite) {
+    const entry = this.entries.find(item => item.id === id);
+    if (!entry) return;
+    entry.favorite = favorite === true;
+    await this.save();
+  }
+
+  async setSessionArguments(id, args) {
+    const entry = this.entries.find(item => item.id === id);
+    if (!entry) throw new Error('This session is no longer tracked.');
+    if (args !== undefined && !Array.isArray(args)) throw new Error('Session arguments must be a JSON array.');
+    if (args !== undefined) startupArguments(entry.provider, { [`${entry.provider}Arguments`]: args });
+    if (args === undefined) delete entry.sessionArguments;
+    else entry.sessionArguments = [...args];
+    await this.save();
+  }
+
+  async hideFromHistory(session) {
+    if (!session || !session.sessionId || !session.provider) return;
+    const tracked = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
+    if (tracked && (tracked.enabled !== false || tracked.favorite || this.live.has(tracked.id))) throw new Error('Enabled, favorite, or running sessions are kept visible.');
+    const key = sessionKey(session);
+    this.hiddenHistory.add(key);
+    await this.context.workspaceState.update('rekindle.hiddenHistory.v1', [...this.hiddenHistory]);
+    this.changed();
+  }
+
+  async hideHistoryEntries(sessions) {
+    for (const session of sessions) {
+      if (!session?.provider || !session.sessionId) continue;
+      const tracked = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
+      if (tracked && (tracked.enabled !== false || tracked.favorite || this.live.has(tracked.id))) continue;
+      this.hiddenHistory.add(sessionKey(session));
+    }
+    await this.context.workspaceState.update('rekindle.hiddenHistory.v1', [...this.hiddenHistory]);
+    this.changed();
+  }
+
+  async unhideSession(session) {
+    if (!session?.provider || !session.sessionId) return;
+    if (this.hiddenHistory.delete(sessionKey(session))) {
+      await this.context.workspaceState.update('rekindle.hiddenHistory.v1', [...this.hiddenHistory]);
+      this.changed();
+    }
+  }
+
+  async resetHiddenHistory() {
+    this.hiddenHistory.clear();
+    await this.context.workspaceState.update('rekindle.hiddenHistory.v1', []);
+    this.changed();
+  }
+
+  async markActivity(id, timestamp) {
+    const entry = this.entries.find(item => item.id === id);
+    const next = normalizeTimestamp(timestamp);
+    if (!entry || !next || next <= (entry.lastActivityAt || 0)) return false;
+    entry.lastActivityAt = next;
+    await this.save();
+    return true;
+  }
+
+  async markOpened(id, timestamp) {
+    const entry = this.entries.find(item => item.id === id);
+    const next = normalizeTimestamp(timestamp);
+    if (!entry || !next || next <= (entry.lastOpenedAt || 0)) return false;
+    entry.lastOpenedAt = next;
+    await this.save();
+    return true;
   }
 
   observe(session, terminal, previousId) {
@@ -84,6 +177,9 @@ class SessionManager {
         ...(pending ? { name: pending.name, customName: pending.customName === true } : {}),
         provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile,
         cwd: session.cwd, enabled: pending?.enabled ?? true,
+        favorite: pending?.favorite === true,
+        ...(pending?.sessionArguments !== undefined ? { sessionArguments: [...pending.sessionArguments] } : {}),
+        lastActivityAt: normalizeTimestamp(session.lastActivityAt ?? session.updatedAt) || undefined,
         createdAt: pending?.createdAt || new Date().toISOString()
       };
       this.entries.push(entry);
@@ -92,6 +188,8 @@ class SessionManager {
     this.pending.delete(previousId);
     const values = { provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: entry.customName ? entry.name : terminal.name, automatic: true, unresolved: false };
     if (Object.keys(values).some(key => entry[key] !== values[key])) { Object.assign(entry, values); dirty = true; }
+    const activityAt = normalizeTimestamp(session.activityAt);
+    if (activityAt && activityAt > (entry.lastActivityAt || 0)) { entry.lastActivityAt = activityAt; dirty = true; }
     this.live.set(entry.id, terminal);
     return { entry, dirty };
   }
@@ -100,6 +198,7 @@ class SessionManager {
     if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before starting agents.');
     const entry = { ...session, id: randomUUID(), name, customName: true };
     const config = this.config();
+    if (Array.isArray(session.sessionArguments)) config[`${entry.provider}Arguments`] = [...session.sessionArguments];
     const command = newSessionCommand(entry.provider, config);
     const stat = await fs.stat(entry.cwd).catch(() => null);
     if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
@@ -137,18 +236,31 @@ class SessionManager {
     const pythonInstalled = this.vscode.extensions?.getExtension('ms-python.python') || this.vscode.extensions?.getExtension('ms-python.vscode-python-envs');
     await this.shellGate.wait(terminal, { grace: pythonInstalled ? 1000 : 0 });
     if (!this.vscode.window.terminals.includes(terminal)) return;
-    const command = startupCommand || resumeCommand(entry, this.config());
+    const command = startupCommand || resumeCommand(entry, this.configFor(entry));
     if (terminal.shellIntegration) terminal.shellIntegration.executeCommand(command);
     else terminal.sendText(command, true);
   }
 
-  async open(entry, reveal = true) {
+  async open(entry, reveal = true, updateActivity = true) {
     if (entry.unresolved) throw new Error('Cannot identify this terminal in a shared Codex daemon. Restore skipped to avoid opening the wrong conversation.');
     if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before restoring agent sessions.');
     if (!this.entries.some(item => item.id === entry.id)) throw new Error('This session is no longer tracked.');
+    await this.unhideSession(entry);
     const known = this.live.get(entry.id) || this.vscode.window.terminals.find(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID === entry.id);
     if (known && known.exitStatus === undefined && this.vscode.window.terminals.includes(known)) {
+      const retrying = this.status.get(entry.id)?.state === 'restore-failed';
+      if (retrying) {
+        try { await this.startInShell(known, entry); }
+        catch (error) {
+          this.live.delete(entry.id);
+          this.status.set(entry.id, { state: 'restore-failed', reason: error.message, updatedAt: Date.now() });
+          this.changed(entry.id);
+          throw error;
+        }
+      }
       this.live.set(entry.id, known);
+      this.status.set(entry.id, { state: retrying ? 'unknown' : 'open', ...(retrying ? { reason: 'Waiting for the agent session binding to be identified.' } : {}), updatedAt: Date.now() });
+      if (updateActivity) await this.markOpened(entry.id, Date.now());
       if (reveal) known.show(true);
       return known;
     }
@@ -167,17 +279,33 @@ class SessionManager {
         const bound = new Set(this.live.values());
         revived = this.vscode.window.terminals.find(terminal => !bound.has(terminal) && terminal.name === entry.name && terminal.exitStatus === undefined);
       }
-      const terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.config()), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
-      this.live.set(entry.id, terminal);
-      await this.startInShell(terminal, entry);
-      if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);
-      if (reveal) terminal.show(true);
-      this.log(`Started ${entry.provider} session ${entry.sessionId}`);
-      this.changed();
-      return terminal;
+      let terminal;
+      try {
+        terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.configFor(entry)), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
+        this.live.set(entry.id, terminal);
+        this.status.set(entry.id, { state: 'unknown', reason: 'Waiting for the agent session binding to be identified.', updatedAt: Date.now() });
+        await this.startInShell(terminal, entry);
+        if (updateActivity) await this.markOpened(entry.id, Date.now());
+        if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);
+        if (reveal) terminal.show(true);
+        this.log(`Started ${entry.provider} session ${entry.sessionId}`);
+        this.changed();
+        return terminal;
+      } catch (error) {
+        if (terminal) {
+          this.live.delete(entry.id);
+          if (terminal !== revived) terminal.dispose();
+        }
+        throw error;
+      }
     })();
     this.opening.set(entry.id, opening);
     try { return await opening; }
+    catch (error) {
+      this.status.set(entry.id, { state: 'restore-failed', reason: error.message, updatedAt: Date.now() });
+      this.changed(entry.id);
+      throw error;
+    }
     finally { this.opening.delete(entry.id); }
   }
 
@@ -186,10 +314,10 @@ class SessionManager {
     let first;
     for (const entry of this.entries.filter(item => item.enabled !== false)) {
       try {
-        const terminal = await this.open(entry, false);
+        const terminal = await this.open(entry, false, false);
         if (!first && terminal) first = terminal;
       }
-      catch (error) { failures.push({ entry, error }); this.log(`Restore failed: ${entry.name}: ${error.message}`); }
+      catch (error) { this.status.set(entry.id, { state: 'restore-failed', reason: error.message, updatedAt: Date.now() }); this.changed(entry.id); failures.push({ entry, error }); this.log(`Restore failed: ${entry.name}: ${error.message}`); }
     }
     // Set an active terminal and reveal the panel after background restoration.
     // Otherwise opening the terminal panel can create/select a default zsh tab.
@@ -203,9 +331,33 @@ class SessionManager {
     await this.save();
   }
 
+  async restart(entry) {
+    const current = this.entries.find(item => item.id === entry.id);
+    if (!current) throw new Error('This session is no longer tracked.');
+    if (current.unresolved) throw new Error('Cannot restart because this terminal is not bound to an exact conversation.');
+    const terminal = this.live.get(current.id);
+    if (terminal && this.vscode.window.terminals.includes(terminal) && terminal.exitStatus === undefined) {
+      this.restarting.add(terminal);
+      try {
+        terminal.dispose();
+        const closed = await new Promise(resolve => {
+          let subscription;
+          const timer = setTimeout(() => { subscription?.dispose(); resolve(!this.vscode.window.terminals.includes(terminal)); }, 5000);
+          subscription = this.vscode.window.onDidCloseTerminal(closedTerminal => {
+            if (closedTerminal === terminal) { clearTimeout(timer); subscription.dispose(); resolve(true); }
+          });
+          if (!this.vscode.window.terminals.includes(terminal)) { clearTimeout(timer); subscription?.dispose(); resolve(true); }
+        });
+        if (!closed) throw new Error('The selected terminal did not close, so it was not restarted.');
+        this.closed(terminal);
+      } finally { this.restarting.delete(terminal); }
+    }
+    return this.open(current, true, true);
+  }
+
   closed(terminal) {
     for (const [id, entry] of this.pending) if (entry.terminal === terminal) this.pending.delete(id);
-    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); }
+    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: 'The terminal is closed. The saved session can be opened again.', updatedAt: Date.now() }); }
     // Window shutdown also emits terminal-close events. Never erase saved mappings here.
     this.changed();
   }

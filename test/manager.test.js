@@ -208,3 +208,66 @@ test('new-session validation fails before creating terminals or pending entries'
   assert.equal(terminals.length,0);
   assert.equal(manager.pending.size,0);
 });
+
+test('per-session argument overrides persist and reach macOS fresh and exact-resume shell commands', async () => {
+  const config = { claudeArguments: ['--permission-mode', 'bypassPermissions'] };
+  const { manager, vscode, terminals, context } = setup();
+  vscode.workspace.getConfiguration = () => ({ get: key => config[key] });
+  const model = await manager.add({ provider:'claude', sessionId:'model-id', cwd:os.tmpdir() }, 'Model session');
+  await manager.setSessionArguments(model.id, ['--model', 'claude-sonnet-4-5']);
+  const empty = await manager.add({ provider:'claude', sessionId:'empty-id', cwd:os.tmpdir() }, 'No defaults');
+  await manager.setSessionArguments(empty.id, []);
+  await manager.restore();
+  assert.equal(terminals[0].sent, "'claude' '--model' 'claude-sonnet-4-5' '--resume' 'model-id'");
+  assert.equal(terminals[1].sent, "'claude' '--resume' 'empty-id'");
+  const reloaded = new SessionManager(vscode, context, () => {}, () => {});
+  assert.deepEqual(reloaded.entries.find(entry=>entry.id===model.id).sessionArguments,['--model','claude-sonnet-4-5']);
+  assert.deepEqual(reloaded.entries.find(entry=>entry.id===empty.id).sessionArguments,[]);
+  const fresh = await manager.create({provider:'claude',cwd:os.tmpdir(),sessionArguments:['--model','claude-haiku-4-5']},'Fresh override');
+  assert.equal(fresh.sent,"'claude' '--model' 'claude-haiku-4-5'");
+});
+
+test('history hiding is reversible and preserves enabled, running, and favorite records', async () => {
+  const {manager,data}=setup();
+  const enabled=await manager.add(session('enabled'),'Enabled');
+  const paused=await manager.add(session('paused'),'Paused',false);
+  const favorite=await manager.add(session('favorite'),'Favorite',false);
+  await manager.setFavorite(favorite.id,true);
+  await manager.hideHistoryEntries([enabled,paused,favorite,session('native')]);
+  assert.equal(manager.hiddenHistory.has('codex:enabled'),false);
+  assert.equal(manager.hiddenHistory.has('codex:paused'),true);
+  assert.equal(manager.hiddenHistory.has('codex:favorite'),false);
+  assert.equal(manager.hiddenHistory.has('codex:native'),true);
+  await manager.resetHiddenHistory();
+  assert.deepEqual(data['rekindle.hiddenHistory.v1'],[]);
+});
+
+test('failed restore is shown and retry starts a fresh selected terminal', async () => {
+  const {manager,vscode,terminals}=setup();
+  const entry=await manager.add(session('retry-id'),'Retry me');
+  const create=vscode.window.createTerminal;
+  let first=true;
+  vscode.window.createTerminal=options=>{
+    const terminal=create(options);
+    const send=terminal.sendText.bind(terminal);
+    terminal.sendText=command=>{if(first){first=false;throw new Error('simulated shell send failure');}return send(command);}; const dispose=terminal.dispose.bind(terminal); terminal.dispose=()=>{dispose();terminal.exitStatus={code:1};};
+    return terminal;
+  };
+  await assert.rejects(manager.open(entry),/simulated shell send failure/);
+  assert.equal(manager.status.get(entry.id).state,'restore-failed');
+  assert.equal(manager.live.has(entry.id),false,'failed new terminal is not left as an apparent live restore');
+  assert.equal(terminals[0].disposed,true);
+  await manager.open(entry);
+  assert.equal(terminals.length,2);
+  assert.equal(terminals[1].sent,"'codex' 'resume' 'retry-id'");
+  assert.equal(manager.status.get(entry.id).state,'unknown','a successful retry waits for lifecycle identification');
+});
+
+test('explicitly opening an old tracked native row makes it visible without changing its task activity', async () => {
+  const {manager}=setup();
+  const old=await manager.add({...session('old-native'),updatedAt:Date.now()-20*86400000},'Old native',false);
+  const oldActivity=old.lastActivityAt;
+  await manager.open(old);
+  assert.equal(old.lastActivityAt,oldActivity,'opening is stored separately from provider task activity');
+  assert.ok(old.lastOpenedAt>Date.now()-10000);
+});

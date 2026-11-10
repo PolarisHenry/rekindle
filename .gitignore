@@ -1,6 +1,6 @@
 node_modules/
 *.vsix
-.test-data/
+.test-data*/
 .vscode-test/
 
 .DS_Store

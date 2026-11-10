@@ -36,6 +36,12 @@ function parseOpenFiles(text) {
   return records;
 }
 
+function normalizeActivity(value) {
+  const n = typeof value === 'string' ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+}
+
 function skipJsonString(text, index) {
   for (let i = index + 1; i < text.length; i++) {
     if (text[i] === '\\') { i++; continue; }
@@ -118,7 +124,7 @@ async function readCodexLifecycle(file, cursor, startedAt = 0) {
   const reset = !cursor || cursor.file !== file || stat.ino !== cursor.ino || stat.size < cursor.offset;
   if (reset) {
     const baseline = await readCodexBaseline(file, stat.size, startedAt);
-    return { cursor: { file, ino: stat.ino, offset: baseline.offset, working: baseline.working, turnId: baseline.turnId }, reset, completions: baseline.completions };
+    return { cursor: { file, ino: stat.ino, offset: baseline.offset, working: baseline.working, turnId: baseline.turnId, activityAt: baseline.activityAt }, reset, completions: baseline.completions };
   }
   const start = cursor.offset;
   const length = Math.min(stat.size - start, 262144);
@@ -130,24 +136,32 @@ async function readCodexLifecycle(file, cursor, startedAt = 0) {
     if (!completeLength && bytesRead === 262144) completeLength = bytesRead;
     let working = cursor.working;
     let turnId = cursor.turnId;
+    let activityAt = cursor.activityAt;
     const completions = [];
     forEachLinePrefix(buffer, completeLength, line => {
       const event = codexEventMetadata(line);
-      if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; }
+      if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; activityAt = eventActivityAt(event) || activityAt; }
       else if (event?.type === 'task_complete' && event.turn_id && (!turnId || event.turn_id === turnId)) {
         working = false;
         const completedAt = typeof event.completed_at === 'number' ? event.completed_at * 1000 : Date.parse(event.timestamp || '') || Date.now();
+        activityAt = Number.isFinite(completedAt) ? completedAt : activityAt;
         completions.push({ turnId:event.turn_id, completedAt });
         turnId = undefined;
-      } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; turnId = undefined; }
+      } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; activityAt = eventActivityAt(event) || activityAt; turnId = undefined; }
     });
-    return { cursor: { file, ino: stat.ino, offset: start + completeLength, working, turnId }, reset, completions };
+    return { cursor: { file, ino: stat.ino, offset: start + completeLength, working, turnId, activityAt }, reset, completions };
   } finally { await handle.close(); }
 }
 
 function codexEventMetadata(prefix) {
   const row = readCodexMetadataObject(prefix, prefix.search(/\S/), new Set(['timestamp','type']), ['type','turn_id','completed_at'])?.value;
   return row?.type === 'event_msg' ? { ...row.payload, timestamp: row.timestamp } : undefined;
+}
+
+function eventActivityAt(event) {
+  if (typeof event?.completed_at === 'number') return event.completed_at * 1000;
+  const parsed = Date.parse(event?.timestamp || '');
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function forEachLinePrefix(buffer, length, callback) {
@@ -169,7 +183,7 @@ async function readCodexBaseline(file, size, startedAt) {
     const buffer = Buffer.alloc(65536);
     const prefix = Buffer.alloc(2048);
     let position = 0, lineOffset = 0, prefixLength = 0;
-    let working = false, turnId;
+    let working = false, turnId, activityAt;
     const completions = [];
     while (position < size) {
       const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, size - position), position);
@@ -182,20 +196,21 @@ async function readCodexBaseline(file, size, startedAt) {
         if (take > 0) { buffer.copy(prefix, prefixLength, index, index + take); prefixLength += take; }
         if (newline < 0 || newline >= bytesRead) break;
         const event = codexEventMetadata(prefix.subarray(0, prefixLength).toString('utf8'));
-        if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; }
+        if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; activityAt = eventActivityAt(event) || activityAt; }
         else if (event?.type === 'task_complete' && event.turn_id && (!turnId || event.turn_id === turnId)) {
           working = false;
           const completedAt = typeof event.completed_at === 'number' ? event.completed_at * 1000 : Date.parse(event.timestamp || '');
+          if (Number.isFinite(completedAt)) activityAt = completedAt;
           if (Number.isFinite(completedAt) && completedAt >= startedAt) completions.push({ turnId:event.turn_id, completedAt });
           turnId = undefined;
-        } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; turnId = undefined; }
+        } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; activityAt = eventActivityAt(event) || activityAt; turnId = undefined; }
         lineOffset = position + newline + 1;
         prefixLength = 0;
         index = newline + 1;
       }
       position += bytesRead;
     }
-    return { working, turnId, offset: lineOffset, completions };
+    return { working, turnId, offset: lineOffset, completions, activityAt };
   } finally { await handle.close(); }
 }
 
@@ -231,7 +246,7 @@ function consumeCompletion(key, completedAt, seen, startedAt = Infinity) {
 async function installPiBridge(home = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi/agent'), stateDirectory = registry) {
   const file = path.join(home, 'extensions/vscode-agent-session-restore.ts');
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const code = `// Installed by the local VS Code Agent Session Restore extension.\nimport fs from 'node:fs';\nimport path from 'node:path';\nexport default function(pi: any) {\n  if (process.env.TERM_PROGRAM !== 'vscode') return;\n  const folder = ${JSON.stringify(stateDirectory)};\n  const publish = (working: boolean, completed: boolean, ctx: any) => {\n    try {\n      const sessionFile = ctx.sessionManager.getSessionFile();\n      if (!sessionFile) return;\n      fs.mkdirSync(folder, {recursive:true});\n      const target = path.join(folder, String(process.pid)+'.json');\n      const temp = target+'.tmp';\n      let previous;\n      try { previous = JSON.parse(fs.readFileSync(target,'utf8')); } catch {}\n      const sessionId = ctx.sessionManager.getSessionId();\n      const same = previous?.provider === 'pi' && previous?.sessionId === sessionId;\n      const completedAt = completed && same && previous.working === true ? Date.now() : same ? previous.completedAt : undefined;\n      fs.writeFileSync(temp, JSON.stringify({pid:process.pid,provider:'pi',sessionId,sessionFile,cwd:ctx.cwd,working,...(completedAt ? {completedAt} : {}),updatedAt:Date.now()}));\n      fs.renameSync(temp,target);\n    } catch {}\n  };\n  pi.on('session_start', (_event: any, ctx: any) => publish(false, false, ctx));\n  pi.on('agent_start', (_event: any, ctx: any) => publish(true, false, ctx));\n  pi.on('agent_settled', (_event: any, ctx: any) => publish(false, true, ctx));\n}\n`;
+  const code = `// Installed by the local VS Code Agent Session Restore extension.\nimport fs from 'node:fs';\nimport path from 'node:path';\nexport default function(pi: any) {\n  if (process.env.TERM_PROGRAM !== 'vscode') return;\n  const folder = ${JSON.stringify(stateDirectory)};\n  const publish = (working: boolean, completed: boolean, ctx: any) => {\n    try {\n      const sessionFile = ctx.sessionManager.getSessionFile();\n      if (!sessionFile) return;\n      fs.mkdirSync(folder, {recursive:true});\n      const target = path.join(folder, String(process.pid)+'.json');\n      const temp = target+'.tmp';\n      let previous;\n      try { previous = JSON.parse(fs.readFileSync(target,'utf8')); } catch {}\n      const sessionId = ctx.sessionManager.getSessionId();\n      const same = previous?.provider === 'pi' && previous?.sessionId === sessionId;\n      const completedAt = completed && same && previous.working === true ? Date.now() : same ? previous.completedAt : undefined;\n      const activityAt = (working || completed && same && previous.working === true) ? Date.now() : same ? previous.activityAt : undefined;\n      fs.writeFileSync(temp, JSON.stringify({pid:process.pid,provider:'pi',sessionId,sessionFile,cwd:ctx.cwd,working,...(completedAt ? {completedAt} : {}),...(activityAt ? {activityAt} : {}),updatedAt:Date.now()}));\n      fs.renameSync(temp,target);\n    } catch {}\n  };\n  pi.on('session_start', (_event: any, ctx: any) => publish(false, false, ctx));\n  pi.on('agent_start', (_event: any, ctx: any) => publish(true, false, ctx));\n  pi.on('agent_settled', (_event: any, ctx: any) => publish(false, true, ctx));\n}\n`;
   const previous = await fs.readFile(file, 'utf8').catch(() => '');
   if (previous !== code) await fs.writeFile(file, code);
 }
@@ -256,6 +271,7 @@ class AutomaticTracker {
     this.missing = new Map();
     this.codexLifecycle = new Map();
     this.notifiedCodexTurns = new Set();
+    this.notifiedCompletionKeys = new Set();
     this.completionsSeen = new Map();
     this.terminalProgress = new Map();
   }
@@ -288,6 +304,7 @@ class AutomaticTracker {
       let dirty = false;
       const workingNow = new Set();
       const activeCodexKeys = new Set();
+      const visibleStates = new Map();
       for (const { terminal, pid } of shells) {
         if (!pid || !this.vscode.window.terminals.includes(terminal)) continue;
         const children = descendants(pid, processes);
@@ -329,23 +346,42 @@ class AutomaticTracker {
             session.working = lifecycle.cursor.working;
             session.lifecycleReset = lifecycle.reset;
             session.completedTurns = lifecycle.completions;
+            session.activityAt = lifecycle.cursor.activityAt || session.activityAt;
           }
           const observed = this.manager.observe(session, terminal, id);
           entry = observed.entry;
           dirty ||= observed.dirty;
+          const previousWorking = this.manager.working.has(entry.id);
           if (session.working === true) workingNow.add(entry.id);
+          const state = session.working === true ? 'working' : session.working === false ? 'open' : 'unknown';
+          const oldStatus = this.manager.status?.get(entry.id);
+          const reason = state === 'unknown' ? 'The agent process is open, but its task state cannot be identified from supported lifecycle events.' : undefined;
+          if (state === 'unknown' && oldStatus?.state !== 'unknown') this.log(`Task status unknown for ${entry.provider} session ${entry.name}: ${reason}`);
+          this.manager.status?.set(entry.id, { state, ...(reason ? { reason } : {}), updatedAt: Date.now() });
+          visibleStates.set(entry.id, `${state}:${reason || ''}`);
+          if (typeof session.working === 'boolean' && previousWorking !== session.working && !session.activityAt) {
+            const activityAt = Date.now();
+            entry.lastActivityAt = Math.max(entry.lastActivityAt || 0, activityAt);
+            dirty = true;
+          }
           if (typeof session.working === 'boolean') await this.updateTerminalProgress(terminal, session.working, pid);
+          else await this.updateTerminalProgress(terminal, false, pid);
           const notifications = this.vscode.workspace.getConfiguration('agentSessionRestore').get('completionNotifications', true);
           const gotCompletion = consumeCompletion(entry.id, session.completedAt, this.completionsSeen, this.startedAt);
-          if (session.provider !== 'codex' && gotCompletion && notifications) {
-            void this.vscode.window.showInformationMessage(`${entry.name} finished working.`);
+          if (session.provider !== 'codex' && gotCompletion) {
+            entry.lastActivityAt = Math.max(entry.lastActivityAt || 0, normalizeActivity(session.completedAt) || Date.now());
+            dirty = true;
+            if (notifications) this.notifyCompletion(entry, `${session.provider}:${entry.id}:${session.completedAt}`);
           }
           if (session.provider === 'codex') for (const completion of session.completedTurns || []) {
-            const notificationKey = `${session.sessionId}:${completion.turnId}`;
+            const notificationKey = `codex:${session.sessionId}:${completion.turnId}`;
             if (this.notifiedCodexTurns.has(notificationKey)) continue;
             this.notifiedCodexTurns.add(notificationKey);
+            this.boundSet(this.notifiedCodexTurns, 2048);
+            entry.lastActivityAt = Math.max(entry.lastActivityAt || 0, normalizeActivity(completion.completedAt) || Date.now());
+            dirty = true;
             const recentEnough = completion.completedAt >= this.startedAt;
-            if (notifications && recentEnough) void this.vscode.window.showInformationMessage(`${entry.name} finished working.`);
+            if (notifications && recentEnough) this.notifyCompletion(entry, notificationKey);
           }
           this.terminalIds.set(terminal, entry.id);
           this.missing.delete(entry.id);
@@ -353,7 +389,14 @@ class AutomaticTracker {
           // Leave mappings intact when an agent is still present but its exact session
           // cannot be read (e.g. a shared Codex daemon). Never guess from recency.
           const agentPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(p.command));
-          if (!agentPresent) await this.updateTerminalProgress(terminal, false, pid);
+          await this.updateTerminalProgress(terminal, false, pid);
+          const state = agentPresent ? 'unknown' : 'saved';
+          const reason = agentPresent
+            ? 'An agent is still running, but the exact conversation or task lifecycle is not identifiable. Check Logs or reopen the saved session.'
+            : 'No agent process is attached to this terminal. The saved conversation can be opened again.';
+          this.manager.status?.set(entry.id, { state, reason, updatedAt: Date.now() });
+          if (agentPresent && this.lastVisibleStates?.get(entry.id)?.startsWith('unknown:') !== true) this.log(`Session status unknown for ${entry.provider} session ${entry.name}: ${reason}`);
+          visibleStates.set(entry.id, `${state}:${reason}`);
           if (ids.length > 1 && !entry.unresolved) { entry.unresolved = true; dirty = true; }
           if (!agentPresent) {
             const since = this.missing.get(entry.id) || Date.now();
@@ -368,10 +411,38 @@ class AutomaticTracker {
       const liveCodexKeys = new Set(this.manager.entries.filter(entry => entry.provider === 'codex' && terminals.some(terminal => this.manager.live.get(entry.id) === terminal)).map(entry => `codex:${entry.sessionId}`));
       for (const key of this.codexLifecycle.keys()) if (!activeCodexKeys.has(key) && !liveCodexKeys.has(key)) this.codexLifecycle.delete(key);
       this.manager.working = workingNow;
-      this.manager.changed();
+      const statusChanges = [];
+      for (const [id, value] of visibleStates) {
+        const previous = this.lastVisibleStates?.get(id);
+        if (previous !== value) statusChanges.push(id);
+      }
+      for (const [id] of (this.manager.status || [])) if (!visibleStates.has(id) && this.lastVisibleStates?.has(id)) statusChanges.push(id);
+      this.lastVisibleStates = visibleStates;
       if (dirty) await this.manager.save();
+      else if (statusChanges.length) for (const id of statusChanges) this.manager.changed(id);
     } catch (error) { this.log(`Observer: ${error.message}`); }
     finally { this.busy = false; }
+  }
+
+  boundSet(set, limit) {
+    while (set.size > limit) set.delete(set.values().next().value);
+  }
+
+  notifyCompletion(entry, dedupeKey = `${entry.provider}:${entry.id}:${entry.sessionId}`) {
+    if (this.notifiedCompletionKeys.has(dedupeKey)) return;
+    this.notifiedCompletionKeys.add(dedupeKey);
+    this.boundSet(this.notifiedCompletionKeys, 2048);
+    const pathName = path.basename(entry.cwd || '') || entry.cwd || 'unknown folder';
+    const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude Code', agy:'Antigravity CLI' })[entry.provider] || entry.provider;
+    void this.vscode.window.showInformationMessage(`${providerName} · ${entry.name} finished · ${pathName}`, 'Open Session').then(async choice => {
+      if (choice !== 'Open Session') return;
+      const current = this.manager.entries.find(item => item.id === entry.id);
+      if (!current || !this.manager.entries.includes(current)) return;
+      try {
+        const terminal = await this.manager.open(current, true);
+        if (terminal && this.vscode.window.terminals.includes(terminal)) terminal.show(false);
+      } catch (error) { this.log(`Could not open completed session: ${error.message}`); }
+    }, error => this.log(`Notification failed: ${error.message}`));
   }
 
   async updateTerminalProgress(terminal, working, pid) {
@@ -423,11 +494,8 @@ class AutomaticTracker {
     this.terminalProgress.delete(terminal);
     const id = this.terminalIds.get(terminal);
     const entry = this.manager.entries.find(row => row.id === id);
-    if (entry) {
-      this.codexLifecycle.delete(`codex:${entry.sessionId}`);
-      this.completionsSeen.delete(entry.id);
-      for (const key of this.notifiedCodexTurns) if (key.startsWith(`${entry.sessionId}:`)) this.notifiedCodexTurns.delete(key);
-    }
+    // Keep per-session completion cursors and bounded notified-turn history across
+    // terminal restarts so a historical task cannot announce itself again.
     this.terminalIds.delete(terminal);
   }
 
@@ -437,4 +505,4 @@ class AutomaticTracker {
     this.terminalProgress.clear();
   }
 }
-module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge };
+module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };

@@ -1,19 +1,32 @@
 'use strict';
 const path = require('node:path');
-const { sessionKey, discoverSessions, isInWorkspace } = require('./core');
+const { sessionKey, discoverSessions, isInWorkspace, normalizeTimestamp } = require('./core');
 const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
 
+function activityTime(entry) {
+  const activity = Math.max(0, ...[entry.lastActivityAt, entry.lastOpenedAt, entry.updatedAt].map(normalizeTimestamp));
+  if (activity) return activity;
+  return entry.activityUnknown ? 0 : normalizeTimestamp(entry.createdAt);
+}
+
 function groupedSessions(tracked, history, showHistory, options = {}) {
-  const { groupBy = 'folder', workspaceFolders = [], workspaceOnly = true, currentFolder, search = '' } = options;
+  const { groupBy = 'folder', workspaceFolders = [], workspaceOnly = true, currentFolder, search = '', hiddenHistory = new Set(), historyRangeDays = 'all', now = Date.now() } = options;
   const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const rows = new Map(tracked.map(entry => [sessionKey(entry), entry]));
   if (showHistory) for (const row of history) {
+    if (hiddenHistory.has(sessionKey(row))) continue;
     if (!rows.has(sessionKey(row))) rows.set(sessionKey(row), {
       ...row, id: `history:${sessionKey(row)}`, name: row.title || row.sessionId,
       enabled: false, historyOnly: true
     });
   }
+  const withinHistoryRange = entry => {
+    const excludedByHistory = entry.historyOnly || entry.archived || entry.enabled === false;
+    if (!showHistory || !excludedByHistory || historyRangeDays === 'all') return true;
+    const time = activityTime(entry);
+    return time > 0 && time >= now - historyRangeDays * 86400000;
+  };
   const priority = entry => {
     const cwd = path.resolve(entry.cwd);
     if (currentFolder && cwd === path.resolve(currentFolder)) return 0;
@@ -22,10 +35,12 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
   };
   const groups = new Map();
   for (const entry of rows.values()) {
+    if (hiddenHistory.has(sessionKey(entry)) && (entry.historyOnly || entry.archived || entry.enabled === false)) continue;
     if (!showHistory && entry.archived) continue;
     // The normal view is the set that will actually restore on this workspace.
     // Paused and discovered-only conversations are available from Show History.
     if (!showHistory && (entry.historyOnly || entry.enabled === false)) continue;
+    if (!withinHistoryRange(entry)) continue;
     const text = [entry.name, entry.title, entry.cwd, entry.sessionId, entry.provider, AGENT_NAMES[entry.provider]].filter(Boolean).join(' ').toLocaleLowerCase();
     if (!terms.every(term => text.includes(term))) continue;
     if (workspaceOnly && workspaceFolders.length && !isInWorkspace(entry.cwd, workspaceFolders)) continue;
@@ -37,11 +52,14 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
     groups.get(key).sessions.push(entry);
   }
   const rank = group => Math.min(...group.sessions.map(priority));
+  const latest = group => Math.max(...group.sessions.map(activityTime));
+  const favorite = group => group.sessions.some(entry => entry.favorite === true);
   const label = group => group.kind === 'folder' ? group.cwd : AGENT_NAMES[group.provider] || group.provider;
-  const compare = (a,b) => rank(a)-rank(b) || label(a).localeCompare(label(b));
+  const compare = (a,b) => rank(a)-rank(b) || Number(favorite(b))-Number(favorite(a)) || latest(b)-latest(a) || label(a).localeCompare(label(b)) || a.groupId?.localeCompare(b.groupId || '') || '';
+  const compareSessions = (a,b) => Number(b.favorite === true)-Number(a.favorite === true) || activityTime(b)-activityTime(a) || sessionKey(a).localeCompare(sessionKey(b));
   for (const [key, group] of groups) {
     group.groupId = JSON.stringify([groupBy, key]);
-    group.sessions.sort((a,b) => priority(a)-priority(b) || a.name.localeCompare(b.name) || sessionKey(a).localeCompare(sessionKey(b)));
+    group.sessions.sort(compareSessions);
     const children = new Map();
     for (const entry of group.sessions) {
       const cwd = path.resolve(entry.cwd);
@@ -52,6 +70,7 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
       });
       children.get(childKey).sessions.push(entry);
     }
+    for (const child of children.values()) child.sessions.sort(compareSessions);
     group.children = [...children.values()].sort(compare);
   }
   return [...groups.values()].sort(compare);
@@ -66,6 +85,8 @@ class SessionTree {
     this.showHistory = context.workspaceState.get('rekindle.showHistory', false);
     this.groupBy = context.workspaceState.get('rekindle.groupBy', 'folder') === 'agent' ? 'agent' : 'folder';
     this.workspaceOnly = context.workspaceState.get('rekindle.workspaceOnly', true);
+    this.historyRangeDays = context.workspaceState.get('rekindle.historyRangeDays', vscode.workspace.getConfiguration('agentSessionRestore').get('historyRangeDays', 30));
+    this.expandedGroups = new Map(context.workspaceState.get(`rekindle.expandedGroups.${this.groupBy}`, []));
     this.events = new vscode.EventEmitter();
     this.onDidChangeTreeData = this.events.event;
     this.search = '';
@@ -74,17 +95,30 @@ class SessionTree {
     void this.syncContext();
   }
 
-  refresh() { this.events.fire(); }
+  refresh(element) { this.events.fire(element); void this.syncContext(); }
 
-  attachView(view) { this.view = view; void this.syncContext(); }
+  attachView(view) {
+    this.view = view;
+    if (view.onDidExpandElement) this.context.subscriptions?.push(view.onDidExpandElement(event => this.setExpanded(event.element, true)));
+    if (view.onDidCollapseElement) this.context.subscriptions?.push(view.onDidCollapseElement(event => this.setExpanded(event.element, false)));
+    void this.syncContext();
+  }
+
+  async setExpanded(node, expanded) {
+    if (!node?.groupId) return;
+    this.expandedGroups.set(node.groupId, expanded);
+    await this.context.workspaceState.update(`rekindle.expandedGroups.${this.groupBy}`, [...this.expandedGroups]);
+  }
 
   async syncContext() {
-    if (this.view) this.view.description = `${this.groupBy === 'folder' ? 'By Folder' : 'By Agent'} · ${this.workspaceOnly ? 'Workspace' : 'All Folders'} · ${this.showHistory ? 'History' : 'Tracked'}`;
+    if (this.view) this.view.description = `${this.groupBy === 'folder' ? 'By Folder' : 'By Agent'} · ${this.workspaceOnly ? 'Workspace' : 'All Folders'} · ${this.showHistory ? `History ${this.historyRangeDays === 'all' ? 'All' : `${this.historyRangeDays}d`}` : 'Tracked'}`;
     await Promise.all([
       ['rekindle.searchActive', Boolean(this.search)],
       ['rekindle.showHistory', this.showHistory],
       ['rekindle.groupBy', this.groupBy],
-      ['rekindle.workspaceOnly', this.workspaceOnly]
+      ['rekindle.workspaceOnly', this.workspaceOnly],
+      ['rekindle.historyRangeDays', this.historyRangeDays],
+      ['rekindle.hasHiddenHistory', this.manager.hiddenHistory.size > 0]
     ].map(([key, value]) => this.vscode.commands?.executeCommand('setContext', key, value)));
   }
 
@@ -98,9 +132,41 @@ class SessionTree {
   async setGrouping(value) {
     if (!['folder','agent'].includes(value)) throw new Error('Unknown grouping mode.');
     this.groupBy = value;
+    this.expandedGroups = new Map(this.context.workspaceState.get(`rekindle.expandedGroups.${value}`, []));
     await this.context.workspaceState.update('rekindle.groupBy', value);
     await this.syncContext();
     this.refresh();
+  }
+
+  async setHistoryRange(value) {
+    if (value !== 'all' && (!Number.isInteger(value) || value < 1 || value > 36500)) throw new Error('History range must be All or a whole number from 1 to 36500 days.');
+    this.historyRangeDays = value;
+    await this.context.workspaceState.update('rekindle.historyRangeDays', value);
+    await this.syncContext();
+    this.refresh();
+  }
+
+  async hideHistoryEntry(node) {
+    if (!node?.provider || !node.sessionId) return;
+    const tracked = this.manager.entries.find(entry => sessionKey(entry) === sessionKey(node));
+    if (tracked && (tracked.enabled !== false || tracked.favorite || this.manager.live.has(tracked.id))) throw new Error('Enabled, favorite, or running sessions are kept visible. Disable or unfavorite it first.');
+    await this.manager.hideFromHistory(node);
+    this.refresh();
+  }
+
+  async hideInactiveHistory() {
+    if (this.showHistory) await this.loadHistory();
+    const visible = groupedSessions(this.manager.entries, this.history, this.showHistory, this.displayOptions());
+    const unique = new Map(visible.flatMap(group => [...group.sessions, ...(group.children || []).flatMap(child => child.sessions)]).map(entry => [sessionKey(entry), entry]));
+    const before = this.manager.hiddenHistory.size;
+    await this.manager.hideHistoryEntries([...unique.values()]);
+    this.refresh();
+    return this.manager.hiddenHistory.size - before;
+  }
+
+  async setCustomHistoryRange() {
+    const raw = await this.vscode.window.showInputBox({ title: 'History Range', prompt: 'Show history from the last 1 to 36500 days.', value: String(this.historyRangeDays === 'all' ? 30 : this.historyRangeDays), validateInput: value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 36500 ? undefined : 'Enter a whole number from 1 to 36500.' });
+    if (raw) await this.setHistoryRange(Number(raw));
   }
 
   async setWorkspaceOnly(value) {
@@ -143,6 +209,8 @@ class SessionTree {
       search: this.search,
       groupBy: this.groupBy,
       workspaceOnly: this.workspaceOnly,
+      hiddenHistory: this.manager.hiddenHistory,
+      historyRangeDays: this.historyRangeDays,
       workspaceFolders: this.vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath) || [],
       currentFolder
     };
@@ -176,7 +244,8 @@ class SessionTree {
     const v = this.vscode;
     if (node.kind === 'folder' || node.kind === 'agent') {
       const enabled = node.sessions.filter(entry => entry.enabled !== false).length;
-      const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, node.sessions.some(entry => !entry.historyOnly) ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
+      const defaultExpanded = node.sessions.some(entry => !entry.historyOnly);
+      const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, (this.expandedGroups?.get(node.groupId) ?? defaultExpanded) ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
       item.id = `group:${node.groupId}`;
       item.description = `${enabled} enabled · ${node.sessions.length} sessions`;
       item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
@@ -189,10 +258,12 @@ class SessionTree {
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
     item.id = `session:${sessionKey(node)}`;
     const working = this.manager.working?.has(node.id) === true;
-    item.description = [node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', working && running && v.window.terminals.includes(running) ? 'Working' : ''].filter(Boolean).join(' · ');
-    item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}\nClick to open. Use Enable / Disable Auto Restore to change restoration.`;
+    const status = this.manager.status?.get(node.id);
+    const statusText = working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';
+    item.description = [node.favorite ? '★ Favorite' : '', node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', statusText].filter(Boolean).join(' · ');
+    item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}${status?.reason ? `\n${status.reason}` : ''}\nClick to open.`;
     item.iconPath = sessionIcon(v, node.provider);
-    item.contextValue = node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession';
+    item.contextValue = `${node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession'}${node.favorite ? 'Favorite' : ''}${status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Failed' : ''}`;
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;
   }
@@ -205,4 +276,4 @@ class SessionTree {
 
   dispose() { this.events.dispose(); }
 }
-module.exports = { SessionTree, groupedSessions };
+module.exports = { SessionTree, groupedSessions, activityTime };

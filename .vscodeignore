@@ -1,5 +1,5 @@
 test/**
-.test-data/**
+.test-data*/**
 .vscode-test/**
 *.vsix
 package-lock.json

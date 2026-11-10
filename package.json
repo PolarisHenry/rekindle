@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -160,6 +160,112 @@
         "title": "Disable Completion Notifications",
         "category": "Rekindle",
         "icon": "$(bell-slash)"
+      },
+      {
+        "command": "agentSessionRestore.editSessionArguments",
+        "title": "Edit Session Arguments",
+        "icon": "$(gear)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.openWorkingFolder",
+        "title": "Open Working Folder",
+        "icon": "$(folder-opened)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.copyResumeCommand",
+        "title": "Copy Resume Command",
+        "icon": "$(clippy)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.restart",
+        "title": "Restart Session",
+        "icon": "$(debug-restart)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.favorite",
+        "title": "Favorite Session",
+        "icon": "$(star-full)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.unfavorite",
+        "title": "Unfavorite Session",
+        "icon": "$(star-empty)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.hideHistoryEntry",
+        "title": "Hide from History",
+        "icon": "$(eye-closed)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.hideInactiveHistory",
+        "title": "Hide Visible Inactive History",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.resetHiddenHistory",
+        "title": "Reset Hidden History",
+        "icon": "$(history)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.historyRange1",
+        "title": "Last 1 day",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 1"
+      },
+      {
+        "command": "agentSessionRestore.historyRange3",
+        "title": "Last 3 days",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 3"
+      },
+      {
+        "command": "agentSessionRestore.historyRange7",
+        "title": "Last 7 days",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 7"
+      },
+      {
+        "command": "agentSessionRestore.historyRange15",
+        "title": "Last 15 days",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 15"
+      },
+      {
+        "command": "agentSessionRestore.historyRange30",
+        "title": "Last 30 days",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 30"
+      },
+      {
+        "command": "agentSessionRestore.historyRangeAll",
+        "title": "All History",
+        "category": "Rekindle",
+        "enablement": "rekindle.historyRangeDays != 'all'"
+      },
+      {
+        "command": "agentSessionRestore.historyRangeCustom",
+        "title": "Custom Days…",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.diagnostics",
+        "title": "Show Diagnostics",
+        "icon": "$(output)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.retryRestore",
+        "title": "Retry Restore",
+        "icon": "$(debug-restart)",
+        "category": "Rekindle"
       }
     ],
     "viewsContainers": {
@@ -252,6 +358,21 @@
           "command": "agentSessionRestore.disableCompletionNotifications",
           "when": "view == agentSessionRestore.sessions && rekindle.completionNotifications",
           "group": "3_settings@2"
+        },
+        {
+          "submenu": "rekindle.historyRange",
+          "when": "view == agentSessionRestore.sessions && rekindle.showHistory",
+          "group": "1_view@3"
+        },
+        {
+          "command": "agentSessionRestore.hideInactiveHistory",
+          "when": "view == agentSessionRestore.sessions && rekindle.showHistory",
+          "group": "1_view@4"
+        },
+        {
+          "command": "agentSessionRestore.resetHiddenHistory",
+          "when": "view == agentSessionRestore.sessions && rekindle.hasHiddenHistory",
+          "group": "1_view@5"
         }
       ],
       "view/item/context": [
@@ -267,28 +388,73 @@
         },
         {
           "command": "agentSessionRestore.open",
-          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)$/",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/",
           "group": "inline@1"
         },
         {
           "command": "agentSessionRestore.rename",
-          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)$/",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/",
           "group": "1_manage@1"
         },
         {
           "command": "agentSessionRestore.remove",
-          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)$/",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)/",
           "group": "1_manage@3"
         },
         {
           "command": "agentSessionRestore.enable",
-          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(disabledSession|historySession)$/",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(disabledSession|historySession)/",
           "group": "inline@2"
         },
         {
           "command": "agentSessionRestore.disable",
-          "when": "view == agentSessionRestore.sessions && viewItem == enabledSession",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^enabledSession/",
           "group": "inline@2"
+        },
+        {
+          "command": "agentSessionRestore.editSessionArguments",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/",
+          "group": "2_actions@1"
+        },
+        {
+          "command": "agentSessionRestore.openWorkingFolder",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/",
+          "group": "2_actions@2"
+        },
+        {
+          "command": "agentSessionRestore.copyResumeCommand",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/",
+          "group": "2_actions@3"
+        },
+        {
+          "command": "agentSessionRestore.restart",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession)/",
+          "group": "2_actions@4"
+        },
+        {
+          "command": "agentSessionRestore.favorite",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)/ && !(viewItem =~ /Favorite/)",
+          "group": "2_actions@5"
+        },
+        {
+          "command": "agentSessionRestore.unfavorite",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /Favorite/",
+          "group": "2_actions@5"
+        },
+        {
+          "command": "agentSessionRestore.hideHistoryEntry",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(disabledSession|historySession)/ && !(viewItem =~ /Favorite/)",
+          "group": "3_history@1"
+        },
+        {
+          "command": "agentSessionRestore.diagnostics",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /(Unknown|Failed)/",
+          "group": "3_diagnostics@1"
+        },
+        {
+          "command": "agentSessionRestore.retryRestore",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /Failed/",
+          "group": "3_diagnostics@2"
         }
       ],
       "explorer/context": [
@@ -306,6 +472,36 @@
         {
           "command": "agentSessionRestore.groupByAgent",
           "group": "1_group@2"
+        }
+      ],
+      "rekindle.historyRange": [
+        {
+          "command": "agentSessionRestore.historyRange1",
+          "group": "1_range@1"
+        },
+        {
+          "command": "agentSessionRestore.historyRange3",
+          "group": "1_range@2"
+        },
+        {
+          "command": "agentSessionRestore.historyRange7",
+          "group": "1_range@3"
+        },
+        {
+          "command": "agentSessionRestore.historyRange15",
+          "group": "1_range@4"
+        },
+        {
+          "command": "agentSessionRestore.historyRange30",
+          "group": "1_range@5"
+        },
+        {
+          "command": "agentSessionRestore.historyRangeAll",
+          "group": "1_range@6"
+        },
+        {
+          "command": "agentSessionRestore.historyRangeCustom",
+          "group": "1_range@7"
         }
       ]
     },
@@ -412,6 +608,14 @@
           "default": [],
           "scope": "machine",
           "markdownDescription": "Extra AGY startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+        },
+        "agentSessionRestore.historyRangeDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 36500,
+          "default": 30,
+          "scope": "window",
+          "description": "Initial History Range in days when this workspace has no saved Sessions view choice. The Sessions → … → History Range menu stores later selections per workspace."
         }
       }
     },
@@ -423,6 +627,10 @@
       {
         "id": "rekindle.groupBy",
         "label": "Group By"
+      },
+      {
+        "id": "rekindle.historyRange",
+        "label": "History Range"
       }
     ]
   },

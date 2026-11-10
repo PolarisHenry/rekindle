@@ -8,7 +8,7 @@ async function main() {
   const root = path.resolve(__dirname, '..');
   const data = path.resolve(process.env.REKINDLE_TEST_DATA_DIR || path.join(root, '.test-data'));
   if (!process.env.REKINDLE_TEST_PHASES) await fs.rm(data, { recursive: true, force: true });
-  for (const dir of ['workspace', 'user/User', 'extensions']) await fs.mkdir(path.join(data, dir), { recursive: true });
+  for (const dir of ['workspace', 'user/User', 'extensions', 'shared-data']) await fs.mkdir(path.join(data, dir), { recursive: true });
   const driver = path.join(data, 'extensions/local-tools.restore-integration-driver-0.0.1');
   await fs.mkdir(driver, { recursive: true });
   await fs.writeFile(path.join(driver, 'package.json'), JSON.stringify({ name: 'restore-integration-driver', publisher: 'local-tools', version: '0.0.1', engines: { vscode: '^1.95.0' }, main: './index.js', activationEvents: ['onStartupFinished'] }));
@@ -34,7 +34,7 @@ async function main() {
     'telemetry.telemetryLevel': 'off',
     'workbench.startupEditor': 'none'
   }));
-  const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore', 'new-session'];
+  const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore', 'new-session', 'features-seed', 'features-reopen'];
   for (const phase of phases) {
     if (phase === 'migration-seed') {
       await fs.rm(legacyBridge, { recursive: true, force: true });
@@ -78,7 +78,7 @@ async function main() {
       delete env.ELECTRON_RUN_AS_NODE;
       const child = spawn(process.env.VSCODE_EXECUTABLE_PATH || '/Applications/Visual Studio Code.app/Contents/MacOS/Code', [
         path.join(data, 'workspace'), `--extensionDevelopmentPath=${root}`,
-        ...(['environment-restore','disabled-restore'].includes(phase) ? [`--extensionDevelopmentPath=${path.join(data,'extensions/ms-python.vscode-python-envs-1.42.0')}`] : []), '--user-data-dir', path.join(data, 'user'), '--extensions-dir', path.join(data, 'extensions'),
+        ...(['environment-restore','disabled-restore'].includes(phase) ? [`--extensionDevelopmentPath=${path.join(data,'extensions/ms-python.vscode-python-envs-1.42.0')}`] : []), '--user-data-dir', path.join(data, 'user'), '--extensions-dir', path.join(data, 'extensions'), '--shared-data-dir', path.join(data, 'shared-data'),
         '--disable-updates', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-telemetry'
       ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       const log = createWriteStream(path.join(data, `${phase}.log`));

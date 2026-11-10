@@ -18,6 +18,7 @@ function normalize(provider, payload, explicitEvent) {
       ? event === 'PreInvocation' : undefined;
   const result = { provider, sessionId, cwd, sessionFile: payload.transcript_path || payload.transcriptPath };
   if (working !== undefined) result.working = working;
+  if (['UserPromptSubmit', 'Stop'].includes(event) || provider === 'agy' && ['PreInvocation', 'Stop'].includes(event)) result.activitySignal = true;
   if (event === 'Stop') result.completionSignal = true;
   return result;
 }
@@ -59,9 +60,13 @@ function main() {
     let previous;
     try { previous = JSON.parse(fs.readFileSync(target, 'utf8')); } catch {}
     const completedAt = completionTimestamp(previous, session, Date.now());
+    const same = previous?.provider === session.provider && previous?.sessionId === session.sessionId;
+    const activityAt = (session.working === true || session.completionSignal && same && previous.working === true)
+      ? Date.now() : same ? previous.activityAt : undefined;
     const { completionSignal, ...metadata } = session;
+    delete metadata.activitySignal;
     const temp = `${target}.${process.pid}.tmp`;
-    fs.writeFileSync(temp, JSON.stringify({ ...metadata, ...(completedAt ? { completedAt } : {}), pid, updatedAt: Date.now() }), { mode: 0o600 });
+    fs.writeFileSync(temp, JSON.stringify({ ...metadata, ...(completedAt ? { completedAt } : {}), ...(activityAt ? { activityAt } : {}), pid, updatedAt: Date.now() }), { mode: 0o600 });
     fs.renameSync(temp, target);
   } catch { /* An observer must never interrupt the agent. */ }
 }

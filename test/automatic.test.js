@@ -17,20 +17,20 @@ async function codexSampleFixture(t, notifications = true, initialEvents = []) {
  await fs.writeFile(sessionFile,JSON.stringify({type:'session_meta',payload:{id:'codex-session',cwd:dir}})+'\n');
  for(const event of initialEvents) await fs.appendFile(sessionFile,JSON.stringify({timestamp:new Date(event.timestamp ?? Date.now()).toISOString(),type:'event_msg',payload:event.payload})+'\n');
  const entry={id:'entry-id',provider:'codex',sessionId:'codex-session',sessionFile,cwd:dir,name:'Codex task',enabled:true};
- const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}}};
- const messages=[],progress=[];
+ const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}},show(preserve){this.shownWith=preserve;}};
+ const messages=[],progress=[]; let clickAction; const opens=[];
  const vscode={
   workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>key==='completionNotifications'?notifications:fallback})},
-  window:{terminals:[terminal],showInformationMessage:message=>{messages.push(message);return Promise.resolve();}}
+  window:{terminals:[terminal],showInformationMessage:(message,...actions)=>{messages.push(message);return Promise.resolve(clickAction && actions.includes(clickAction) ? clickAction : undefined);}}
  };
- const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set(),changed(){},save:async()=>{}};
+ const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set(),status:new Map(),changed(){},save:async()=>{},open:async(current)=>{opens.push(current.id); const target=manager.live.get(current.id); return target;}};
  manager.observe=session=>({entry:manager.entries.find(row=>row.sessionId===session.sessionId)||entry,dirty:false});
  const tracker=new AutomaticTracker(vscode,manager,()=>{}, {
   registry,
   execFile:async command=>command==='ps'?{stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'}:{stdout:''},
   writeTerminalProgress:async(_terminal,working)=>{progress.push(working);return true;}
  });
- return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress};
+ return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens,setClickAction(value){clickAction=value;}};
 }
 
 async function appendCodexEvent(file,payload,timestamp=Date.now()) {
@@ -47,11 +47,30 @@ test('Codex sample pipeline clears Working and shows exactly one completion toas
  await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'turn-one',completed_at:Math.ceil(Date.now()/1000),last_agent_message:'private text'});
  await fx.tracker.sample();
  assert.equal(fx.manager.working.has(fx.entry.id),false);
- assert.deepEqual(fx.messages,['Codex task finished working.']);
+ assert.equal(fx.messages.length,1); assert.match(fx.messages[0],/Codex · Codex task finished ·/);
  await fx.tracker.sample();
- assert.deepEqual(fx.messages,['Codex task finished working.'],'repeated idle sampling cannot notify twice');
+ assert.equal(fx.messages.length,1,'repeated idle sampling cannot notify twice');
  assert.ok(fx.progress.includes(true));
  assert.equal(fx.progress.at(-1),false);
+});
+
+test('notification action opens only the matching session on click; restart keeps turn deduplication',async t=>{
+ const fx=await codexSampleFixture(t,true);
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'restart-turn'});
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'restart-turn',completed_at:Math.ceil(Date.now()/1000)});
+ fx.setClickAction('Open Session');
+ await fx.tracker.sample();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(fx.opens,[fx.entry.id]);
+ assert.equal(fx.terminal.shownWith,false,'only clicking the toast selects and focuses that terminal');
+ fx.tracker.closed(fx.terminal);
+ const replacement={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:fx.entry.id}},show(preserve){this.shownWith=preserve;}};
+ fx.vscode.window.terminals[0]=replacement;
+ fx.manager.live.set(fx.entry.id,replacement);
+ await fx.tracker.sample();
+ assert.equal(fx.messages.length,1,'reopening a finished conversation does not repeat its completion toast');
 });
 
 test('Codex cold-start history is suppressed while a fast first-sample completion is notified',async t=>{
@@ -66,7 +85,7 @@ test('Codex cold-start history is suppressed while a fast first-sample completio
  await appendCodexEvent(fast.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'fast-turn'},afterStart);
  await appendCodexEvent(fast.sessionFile,{type:'task_complete',turn_id:'fast-turn',completed_at:Math.ceil(afterStart/1000)},afterStart+1);
  await fast.tracker.sample();
- assert.deepEqual(fast.messages,['Codex task finished working.'],'a task completed before first poll still produces one toast');
+ assert.equal(fast.messages.length,1,'a task completed before first poll still produces one toast');
  assert.equal(fast.manager.working.has(fast.entry.id),false);
  await fast.tracker.sample();
  assert.equal(fast.messages.length,1);
@@ -105,12 +124,12 @@ test('Codex completion toasts stay bound to each session when two agents finish 
  assert.deepEqual([...fx.manager.working].sort(),['entry-id','entry-id-2']);
  await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'first-turn',completed_at:Math.ceil(Date.now()/1000)});
  await fx.tracker.sample();
- assert.deepEqual(fx.messages,['Codex task finished working.']);
+ assert.equal(fx.messages.length,1);
  assert.equal(fx.manager.working.has('entry-id'),false);
  assert.equal(fx.manager.working.has('entry-id-2'),true);
  await appendCodexEvent(secondFile,{type:'task_complete',turn_id:'second-turn',completed_at:Math.ceil(Date.now()/1000)});
  await fx.tracker.sample();
- assert.deepEqual(fx.messages,['Codex task finished working.','Other task finished working.']);
+ assert.equal(fx.messages.length,2); assert.match(fx.messages[1],/Other task finished/);
 });
 test('terminal tab description default exposes OSC progress without replacing the VS Code template',()=>{
  const manifest=require('../package.json');
@@ -349,4 +368,23 @@ test('terminal progress refuses foreign, non-terminal, exited, and non-macOS tar
  const foreignFs={stat:async()=>({isCharacterDevice:()=>true,uid:(process.getuid?.()??0)+1}),open:async()=>{opened++;throw new Error('should not open');}};
  assert.equal(await writeTerminalProgress(terminal,true,{platform:'darwin',terminals:[terminal],fs:foreignFs,execFile}),false);
  assert.equal(opened,0);
+});
+
+test('unidentifiable live agent is Unknown, never idle or a completion, and clears stale tab progress',async t=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-unknown-state-'));
+ t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+ const registry=path.join(dir,'registry');await fs.mkdir(registry);
+ const entry={id:'pi-entry',provider:'pi',sessionId:'pi-session',cwd:dir,name:'pi task',automatic:true,enabled:true};
+ const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}}};
+ await fs.writeFile(path.join(registry,'101.json'),JSON.stringify({pid:101,provider:'pi',sessionId:entry.sessionId,cwd:dir,sessionFile:path.join(dir,'pi.jsonl')}));
+ const writes=[],messages=[];
+ const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set([entry.id]),status:new Map(),observe(session,target){return {entry,dirty:false};},changed(){},save:async()=>{}};
+ const vscode={workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>fallback})},window:{terminals:[terminal],showInformationMessage:message=>{messages.push(message);return Promise.resolve();}}};
+ const tracker=new AutomaticTracker(vscode,manager,()=>{},{registry,execFile:async()=>({stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/pi\n'}),writeTerminalProgress:async(_terminal,working)=>{writes.push(working);return true;}});
+ tracker.terminalIds.set(terminal,entry.id);
+ await tracker.sample();
+ assert.equal(manager.status.get(entry.id).state,'unknown');
+ assert.equal(manager.working.has(entry.id),false);
+ assert.deepEqual(messages,[]);
+ assert.equal(writes.at(-1),false);
 });

@@ -15,6 +15,17 @@ function sessionKey(session) {
   return `${session.provider}:${session.sessionId}`;
 }
 
+function normalizeTimestamp(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value;
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric < 1e12 ? numeric * 1000 : numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
 function shellQuote(value) {
   if (typeof value !== 'string' || /[\0\r\n]/.test(value)) throw new Error('Invalid characters in a command argument');
   return "'" + value.replace(/'/g, "'\\''") + "'";
@@ -149,7 +160,7 @@ async function discoverCodex(root, warn) {
       const { stdout } = await execFile('sqlite3', ['-readonly', '-json', path.join(root, database), 'SELECT id, cwd, title, rollout_path, updated_at FROM threads WHERE archived = 0 AND has_user_event = 1 ORDER BY updated_at DESC LIMIT 1500;'], { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
       rows = JSON.parse(stdout || '[]').filter(row => path.isAbsolute(row.cwd || '')).map(row => ({
         provider: 'codex', sessionId: row.id, cwd: row.cwd, title: cleanTitle(row.title || row.id),
-        sessionFile: row.rollout_path, updatedAt: row.updated_at * 1000
+        sessionFile: row.rollout_path, updatedAt: normalizeTimestamp(row.updated_at)
       }));
     } catch (error) { warn(`Codex index unavailable; falling back to local session files: ${error.message}`); }
   }
@@ -205,11 +216,11 @@ async function discoverSessions(provider, config = {}, warn = () => {}) {
         const workspace = JSON.parse(row.workspace_uris)?.[0];
         const cwd = workspace?.startsWith('file:') ? fileURLToPath(workspace) : workspace;
         if (!path.isAbsolute(cwd || '')) return [];
-        return [{ provider, sessionId: row.conversation_id, cwd, title: cleanTitle(row.title || row.conversation_id), updatedAt: Date.parse(row.last_modified_time) || 0 }];
+        return [{ provider, sessionId: row.conversation_id, cwd, title: cleanTitle(row.title || row.conversation_id), updatedAt: normalizeTimestamp(row.last_modified_time) }];
       } catch { return []; }
     });
   }
   throw new Error('Unsupported agent provider');
 }
 
-module.exports = { startupArguments, newSessionCommand, expandHome, sessionKey, shellQuote, resumeArguments, resumeCommand, launchOptions, cleanTitle, isInWorkspace, resolveTargetFolder, dispatchFolderAdd, discoverSessions };
+module.exports = { startupArguments, newSessionCommand, expandHome, sessionKey, normalizeTimestamp, shellQuote, resumeArguments, resumeCommand, launchOptions, cleanTitle, isInWorkspace, resolveTargetFolder, dispatchFolderAdd, discoverSessions };

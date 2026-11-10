@@ -11,7 +11,8 @@ const MIGRATION_PENDING = 'rekindle.legacyMigration.pending.v1';
 const TREE_KEYS = ['rekindle.showHistory', 'rekindle.groupBy', 'rekindle.workspaceOnly'];
 const ENTRY_KEYS = [
   'id', 'provider', 'sessionId', 'sessionFile', 'cwd', 'name', 'customName',
-  'enabled', 'archived', 'createdAt', 'automatic', 'unresolved'
+  'enabled', 'archived', 'createdAt', 'automatic', 'unresolved', 'favorite',
+  'lastActivityAt', 'lastOpenedAt', 'activityUnknown'
 ];
 
 function workspaceFingerprint(workspace) {
@@ -29,6 +30,7 @@ function sanitizeEntry(entry) {
     const value = entry[key];
     if (value !== undefined && (value === null || ['string', 'boolean', 'number'].includes(typeof value))) clean[key] = value;
   }
+  if (Array.isArray(entry.sessionArguments) && entry.sessionArguments.every(value => typeof value === 'string' && !/[\0\r\n]/.test(value))) clean.sessionArguments = [...entry.sessionArguments];
   return clean;
 }
 

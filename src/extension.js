@@ -1,7 +1,7 @@
 'use strict';
 
 const vscode = require('vscode');
-const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd } = require('./core');
+const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd, resumeCommand } = require('./core');
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
 const { pickConversation } = require('./session-picker');
@@ -10,6 +10,7 @@ const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
 const { CONTEXT_KEY: NOTIFICATION_CONTEXT, notificationsEnabled, setNotificationsEnabled } = require('./completion-notifications');
+const { selectSession, showSessionDiagnostics } = require('./session-actions');
 
 async function activate(context) {
   const legacyExtension = vscode.extensions?.getExtension(OLD_EXTENSION_ID);
@@ -31,8 +32,9 @@ async function activate(context) {
   }
   const output = vscode.window.createOutputChannel('Rekindle');
   let sessionTree;
-  const refresh = () => {
-    sessionTree?.refresh();
+  const refresh = id => {
+    const entry = id && manager?.entries.find(item => item.id === id);
+    sessionTree?.refresh(entry);
     void vscode.commands.executeCommand('setContext', 'agentSessionRestore.hasSessions', manager.entries.length > 0);
   };
   const log = message => output.appendLine(`[${new Date().toISOString()}] ${message}`);
@@ -72,6 +74,13 @@ async function activate(context) {
     if (entry?.sessionId) return sessionTree.ensureTracked(entry);
     const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: 'Choose a session' });
     return picked?.entry;
+  }
+
+  function findEntry(entry) {
+    if (!entry?.sessionId) return undefined;
+    return manager.entries.find(saved => saved.id === entry.id)
+      || manager.entries.find(saved => saved.provider === entry.provider && saved.sessionId === entry.sessionId)
+      || entry;
   }
 
   async function chooseDirectory(folders, suggested) {
@@ -126,6 +135,7 @@ async function activate(context) {
   command('addHere', async target => dispatchAddHere(target, (...args) => vscode.commands.executeCommand(...args)));
 
   command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
+  command('retryRestore', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen, true); });
   command('restore', async () => {
     const failures = await manager.restore();
     if (failures.length) await vscode.window.showWarningMessage(`${failures.length} session(s) could not be restored. See logs for details.`, 'Show Logs').then(choice => { if (choice) output.show(); });
@@ -145,6 +155,81 @@ async function activate(context) {
     chosen.customName = true;
     await manager.save();
   });
+  command('editSessionArguments', async entry => {
+    const chosen = await selectSession(vscode, manager, sessionTree, entry);
+    const existing = chosen && (manager.entries.find(item => item.id === chosen.id)
+      || manager.entries.find(item => item.provider === chosen.provider && item.sessionId === chosen.sessionId));
+    if (!chosen) return;
+    const mode = await vscode.window.showQuickPick([
+      { label: 'Inherit global arguments', value: 'inherit', description: 'Follow Rekindle launch settings.' },
+      { label: 'Set arguments for this session…', value: 'override', description: 'Enter a JSON array; [] explicitly disables global arguments.' }
+    ], { title: `${chosen.name} Arguments` });
+    if (!mode) return;
+    if (mode.value === 'inherit') { if (existing) await manager.setSessionArguments(existing.id, undefined); return; }
+    const current = Array.isArray(chosen.sessionArguments) ? JSON.stringify(chosen.sessionArguments) : '[]';
+    const raw = await vscode.window.showInputBox({
+      title: `${chosen.name} Arguments`, prompt: 'Enter a JSON array of individual arguments, e.g. ["--model","o3"].', value: current,
+      validateInput: value => {
+        try {
+          const parsed = JSON.parse(value);
+          if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string' || /[\0\r\n]/.test(item))) return 'Enter a JSON array of single-line strings.';
+          const config = { [`${chosen.provider}Arguments`]: parsed };
+          require('./core').startupArguments(chosen.provider, config);
+          return undefined;
+        } catch { return 'Enter valid JSON containing an array of strings.'; }
+      }
+    });
+    if (raw !== undefined) {
+      const tracked = existing || await sessionTree.ensureTracked(chosen);
+      await manager.setSessionArguments(tracked.id, JSON.parse(raw));
+    }
+  });
+  command('openWorkingFolder', async entry => {
+    const chosen = await selectSession(vscode, manager, sessionTree, entry);
+    if (chosen?.cwd) await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(chosen.cwd), { forceNewWindow: true });
+  });
+  command('copyResumeCommand', async entry => {
+    const chosen = await selectSession(vscode, manager, sessionTree, entry);
+    if (!chosen) return;
+    await vscode.env.clipboard.writeText(resumeCommand(chosen, manager.configFor(chosen)));
+    await vscode.window.showInformationMessage('Resume command copied to the clipboard.');
+  });
+  command('restart', async entry => {
+    const chosen = await pickEntry(entry);
+    if (chosen) await manager.restart(chosen);
+  });
+  command('favorite', async entry => {
+    const selected = await selectSession(vscode, manager, sessionTree, entry);
+    if (selected) {
+      const chosen = await sessionTree.ensureTracked(selected);
+      await manager.setFavorite(chosen.id, true);
+    }
+  });
+  command('unfavorite', async entry => {
+    const selected = await selectSession(vscode, manager, sessionTree, entry);
+    const chosen = selected && findEntry(selected);
+    if (chosen && manager.entries.some(item => item.id === chosen.id)) await manager.setFavorite(chosen.id, false);
+  });
+  command('hideHistoryEntry', async entry => {
+    const chosen = await selectSession(vscode, manager, sessionTree, entry);
+    if (chosen) await sessionTree.hideHistoryEntry(chosen);
+  });
+  command('hideInactiveHistory', async () => {
+    const count = await sessionTree.hideInactiveHistory();
+    await vscode.window.showInformationMessage(`Hidden ${count} inactive history records. Originals are untouched; use Reset Hidden History to restore them.`);
+  });
+  command('resetHiddenHistory', async () => {
+    await manager.resetHiddenHistory();
+    await vscode.window.showInformationMessage('Hidden history is visible again.');
+  });
+  command('historyRange1', () => sessionTree.setHistoryRange(1));
+  command('historyRange3', () => sessionTree.setHistoryRange(3));
+  command('historyRange7', () => sessionTree.setHistoryRange(7));
+  command('historyRange15', () => sessionTree.setHistoryRange(15));
+  command('historyRange30', () => sessionTree.setHistoryRange(30));
+  command('historyRangeAll', () => sessionTree.setHistoryRange('all'));
+  command('historyRangeCustom', () => sessionTree.setCustomHistoryRange());
+  command('diagnostics', entry => showSessionDiagnostics({ vscode, manager, tree: sessionTree, output, entry }));
   command('enable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, true); });
   command('disable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, false); });
   command('search', () => sessionTree.searchSessions());
@@ -167,7 +252,7 @@ async function activate(context) {
   });
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
-    if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User) {
+    if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User && !manager.restarting.has(terminal)) {
       const entry = manager.entries.find(item => manager.live.get(item.id) === terminal);
       if (entry) void manager.setEnabled(entry.id, false);
     }

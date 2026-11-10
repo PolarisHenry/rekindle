@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0
+
+- Make completion notifications actionable: each toast can open the exact saved session, and completed Codex turns remain deduplicated across a session restart.
+- Show Open, Working, Unknown, and Restore Failed states with per-session diagnostics and retry for failed restores.
+- Add per-session argument overrides, session actions, reversible favorites/history hiding, configurable history ranges, and per-group expansion memory.
+- Sort favorites first, then by recent task activity or explicit opening; native history timestamps are preserved without promoting records when they are merely tracked.
+- Keep cleanup limited to Rekindle metadata and hidden-history indexes; native CLI conversation files are never deleted.
+
 ## 0.9.3
 
 - Enable non-focusing completion notifications by default and add an explicit Sessions menu toggle.

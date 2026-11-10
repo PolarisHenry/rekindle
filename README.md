@@ -46,7 +46,7 @@ The Marketplace extension identifier is `ArionLee.agent-session-restore`; settin
 
 Open the Sessions header's **…** menu for view options:
 
-- **Show History / Hide History:** include automatically archived records and additional saved local conversations from Codex, pi, Claude Code, and AGY. Off by default.
+- **Show History / Hide History:** include automatically archived records and additional saved local conversations from Codex, pi, Claude Code, and AGY. Off by default; the menu's **History Range** presets show the last 30 days by default, with 1/3/7/15/30-day, All, and Custom options. Enabled tracked sessions are not hidden by this range.
 - **Show All Folders / Current Workspace Only:** restrict the list to the open workspace folders by default, or browse conversations from other projects.
 - **Group By → By Folder / By Agent:** choose **Folder → Agent → Session** or **Agent → Folder → Session**. Both modes retain the second grouping level; folders use full paths for identity and tooltips.
 
@@ -54,7 +54,12 @@ The default view shows enabled sessions in the current workspace and its subfold
 
 - **Search Sessions (magnifying glass):** filter names, agent labels, full paths, and session IDs as you type. Enter keeps the filter, Escape cancels the edit, and **Clear Search** removes it. Searches respect the current workspace/history scope.
 - **Enable Auto Restore / Disable Auto Restore:** use the row action or context menu to control restoration on the next workspace startup. There are no checkboxes. Disabling does not stop a running agent; its row is hidden until **Show History** is enabled.
-- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. Rekindle also sends VS Code's OSC 9;4 progress signal to the exact terminal PTY, so the terminal-tab description can show progress without changing its title or focusing it. An open but idle terminal has no running label. Completion notifications are on by default; use **Sessions → … → Disable Completion Notifications** to turn them off, or set `agentSessionRestore.completionNotifications` to `false`.
+- Session rows distinguish **Working**, **Open**, **Unknown**, and **Restore Failed** when that state is available. Unknown means an agent is present but Rekindle cannot safely identify its task state; use **Show Diagnostics** for the reason. Supported lifecycle sources are Codex rollout events, pi agent lifecycle events, Claude Code hooks, and Antigravity CLI hooks. Rekindle also sends VS Code's OSC 9;4 progress signal to the exact terminal PTY, so the terminal-tab description can show progress without changing its title or focusing it.
+- Completion notifications are on by default. A toast names the agent, session, and folder; click **Open Session** to switch to that exact terminal. Dismissal does not focus a terminal. Use **Sessions → … → Disable Completion Notifications** to turn them off, or set `agentSessionRestore.completionNotifications` to `false`.
+- Rows sort favorites first, then by recent activity. Opening a session, a provider task start, or a completion updates activity; background restore and ordinary metadata refreshes do not. The two grouping modes remember their expanded groups per workspace.
+- **Edit Session Arguments:** set a JSON array of individual command-line arguments for one session, or return it to global settings. An explicit `[]` removes global arguments for that session. Arguments are passed as literal values and are never evaluated as shell code.
+- Session context actions include **Rename**, **Open Working Folder** (opens a new VS Code window), **Copy Resume Command**, **Restart Session**, and **Favorite**. Restart closes and resumes only the selected session after an explicit click.
+- **Hide Visible Inactive History** hides only visible disabled/native records that are not enabled, running, or favorited. It never deletes CLI conversation files. **Reset Hidden History** restores hidden rows.
 - **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
 - **… → Show History:** reveals automatically archived conversations and additional native history so they can be opened or enabled again.
 - Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
@@ -67,7 +72,7 @@ For ordinary or revived terminals, Rekindle also observes shell command start/en
 
 ## Everyday behavior
 
-Closing VS Code preserves tracked sessions. Reopening the same workspace restores their saved conversation history. It does **not** keep closed agents running in the background or automatically send another prompt.
+Closing VS Code preserves tracked sessions and per-session argument arrays. Reopening the same workspace restores their saved conversation history. It does **not** keep closed agents running in the background or automatically send another prompt.
 
 Deleting a terminal using its trash button disables its automatic restore and keeps its tracked row visible. Exiting an agent back to a regular shell archives its record after roughly ten seconds. **Forget Session** removes Rekindle's mapping without deleting the native CLI conversation; native history can still show that conversation.
 
@@ -95,6 +100,7 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 | `piHome` | empty | Override the pi data directory |
 | `claudeHome` | empty | Override the Claude history directory |
 | `agyHome` | empty | Override the AGY history directory |
+| `historyRangeDays` | `30` | Initial History Range before a workspace saves its own view choice |
 
 Executable settings accept paths, not shell command fragments or extra arguments. Use **Sessions → … → Agent Launch Settings** to configure extra arguments separately. Each array item is one argument; values containing spaces stay intact and are never evaluated as shell code.
 
@@ -108,7 +114,7 @@ For example, to restore Codex and Claude Code with your preferred permission fla
 }
 ```
 
-This launches `codex --yolo resume <saved-id>`, `claude --permission-mode bypassPermissions --resume <saved-id>`, and `agy --dangerously-skip-permissions --conversation <saved-id>`. Claude uses this permission mode by default; set `agentSessionRestore.claudeArguments` to `[]` if you want to remove it. Codex, pi, and AGY argument defaults remain empty. Settings apply to the next restored/opened terminal and do not restart running agents.
+This launches `codex --yolo resume <saved-id>`, `claude --permission-mode bypassPermissions --resume <saved-id>`, and `agy --dangerously-skip-permissions --conversation <saved-id>`. Claude uses this permission mode by default; set `agentSessionRestore.claudeArguments` to `[]` if you want to remove it. Codex, pi, and AGY argument defaults remain empty. Global settings apply to the next restored/opened terminal and do not restart running agents; **Edit Session Arguments** can override them for one saved session.
 
 ## Local observers
 
@@ -120,7 +126,7 @@ Rekindle installs a small local bridge for each event-based provider. Existing h
 - Shared observer script: `~/.local/share/rekindle/session-hook.cjs`
 - Observer records: `~/.local/state/vscode-agent-session-restore/pi/`
 
-Observer records contain process and session IDs, paths, provider, working state, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Codex lifecycle extracts only `task_started` / `task_complete` event metadata from the exact rollout already associated with a terminal. A managed terminal can use its saved exact rollout if shared-daemon writer locks are ambiguous, after matching the rollout session ID and cwd; an unbound terminal never falls back to another session. Agent CLIs retain their normal authentication, network, hooks, and permission behavior. Rekindle only passes approval-bypass flags when you explicitly configure them.
+Observer records contain process and session IDs, paths, provider, working state, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Codex lifecycle extracts only `task_started` / `task_complete` event metadata from the exact rollout already associated with a terminal. A managed terminal can use its saved exact rollout if shared-daemon writer locks are ambiguous, after matching the rollout session ID and cwd; an unbound terminal never falls back to another session. Agent CLIs retain their normal authentication, network, and hook behavior. Claude Code defaults to `--permission-mode bypassPermissions`; the other providers receive bypass flags only when configured.
 
 On uninstall, remove the pi observer file, the two Claude hook entries whose command references `rekindle/session-hook.cjs`, the AGY `rekindle` definition, and the shared observer script/records if you no longer need them. Leave other hooks intact.
 
@@ -128,7 +134,7 @@ On uninstall, remove the pi observer file, the two Claude hook entries whose com
 
 - Multiple Codex TUIs sharing a background daemon can be ambiguous. Rekindle skips a mapping it cannot identify instead of guessing. Independent `codex --no-daemon` processes avoid that ambiguity; Rekindle does not rewrite your launch command.
 - Agent hooks/extensions must be enabled. Ephemeral sessions cannot be restored.
-- Unsent input, in-flight tasks, scrollback, split layouts, and temporary CLI argument overrides are not restored.
+- Unsent input, in-flight tasks, scrollback, split layouts, and transient CLI-side argument changes are not restored. Rekindle's saved per-session arguments are restored.
 - Terminals sharing the same title may not retain their original tab order.
 - An extra shell that has been used or is running a child process is deliberately retained. Startup cleanup is conservative, not a global prohibition on ordinary terminals.
 

@@ -115,7 +115,7 @@ test('idle open terminals are not labeled Running; active lifecycle state shows 
   const entry=row('a','/work');
   const manager={live:new Map([['a',terminal]]),working:new Set()};
   const tree={vscode:v,manager};
-  assert.equal(SessionTree.prototype.getTreeItem.call(tree,entry).description,'');
+  assert.equal(SessionTree.prototype.getTreeItem.call(tree,entry).description,'Open');
   manager.working.add('a');
   assert.equal(SessionTree.prototype.getTreeItem.call(tree,entry).description,'Working');
 });
@@ -161,4 +161,52 @@ test('search edits filter live, Enter keeps the query, and Escape restores the p
     assert.equal(tree.search,accept?'new query':'old');
     assert.equal(input.disposed,true);
   }
+});
+
+test('history range filters only disabled/native rows while favorites and current activity sort first', () => {
+  const now=Date.UTC(2026,10,10);
+  const rows=[
+    {...row('old-disabled','/work',false),lastActivityAt:now-40*86400000},
+    {...row('recent-disabled','/work',false),lastActivityAt:now-2*86400000},
+    {...row('enabled-old','/work',true),lastActivityAt:now-90*86400000},
+    {...row('unknown-date','/work'),historyOnly:true,activityUnknown:true},
+    {...row('favorite-old','/work',false),favorite:true,lastActivityAt:now-80*86400000}
+  ];
+  const options={now,historyRangeDays:7};
+  assert.deepEqual(groupedSessions(rows,[],true,options)[0].sessions.map(entry=>entry.id),['recent-disabled','enabled-old']);
+  const all=groupedSessions(rows,[],true,{...options,historyRangeDays:'all'});
+  assert.deepEqual(all[0].sessions.map(entry=>entry.id),['favorite-old','recent-disabled','old-disabled','enabled-old','unknown-date']);
+});
+
+test('favorites sort before recent leaves; session tree remembers expansion by grouping mode', async () => {
+  const now=Date.now();
+  const rows=[{...row('recent','/work'),lastActivityAt:now},{...row('favorite','/work'),favorite:true,lastActivityAt:now-100000}];
+  assert.deepEqual(groupedSessions(rows,[],false)[0].sessions.map(entry=>entry.id),['favorite','recent']);
+  const values={};
+  const tree={groupBy:'folder',context:{workspaceState:{update:async(key,value)=>values[key]=value}},expandedGroups:new Map()};
+  const group=groupedSessions(rows,[],false)[0];
+  await SessionTree.prototype.setExpanded.call(tree,group,false);
+  assert.deepEqual(values['rekindle.expandedGroups.folder'],[[group.groupId,false]]);
+  const vscode={TreeItem:class{constructor(label,state){this.label=label;this.collapsibleState=state;}},TreeItemCollapsibleState:{None:0,Collapsed:1,Expanded:2},ThemeIcon:class{},ThemeColor:class{},Uri:{file:fsPath=>({fsPath})}};
+  tree.vscode=vscode; tree.manager={};
+  assert.equal(SessionTree.prototype.getTreeItem.call(tree,group).collapsibleState,vscode.TreeItemCollapsibleState.Collapsed);
+});
+
+test('tracking an old native conversation does not promote it using its new record-created timestamp', () => {
+  const now=Date.UTC(2026,10,10);
+  const old={...row('native-old','/work',false),lastActivityAt:now-20*86400000,createdAt:new Date(now).toISOString()};
+  assert.deepEqual(groupedSessions([old],[],true,{now,historyRangeDays:7}),[]);
+  old.lastOpenedAt=now;
+  assert.equal(groupedSessions([old],[],true,{now,historyRangeDays:7})[0].sessions[0].id,'native-old');
+});
+
+test('context menus cover favorite suffixes and use supported when-clause operators', () => {
+  const manifest=require('../package.json');
+  const menus=manifest.contributes.menus['view/item/context'];
+  assert.ok(menus.some(item=>item.command==='agentSessionRestore.open'&&item.when.includes('enabledSession|disabledSession|historySession')));
+  assert.ok(menus.some(item=>item.command==='agentSessionRestore.restart'&&item.when.includes('disabledSession')));
+  assert.ok(menus.find(item=>item.command==='agentSessionRestore.favorite').when.includes('!(viewItem =~ /Favorite/)'));
+  assert.ok(menus.find(item=>item.command==='agentSessionRestore.hideHistoryEntry').when.includes('!(viewItem =~ /Favorite/)'));
+  assert.equal(menus.some(item=>/!~|!=~/.test(item.when)),false);
+  assert.ok(manifest.contributes.menus['rekindle.historyRange'].some(item=>item.command==='agentSessionRestore.historyRangeCustom'));
 });

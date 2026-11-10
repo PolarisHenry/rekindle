@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { installAgentBridges } = require('../src/bridges');
 const { normalize, owningProcess, completionTimestamp } = require('../src/session-hook.cjs');
 const { resumeArguments } = require('../src/core');
@@ -38,6 +39,35 @@ test('hook completion tokens require a matching observed start and ignore duplic
   assert.equal(completionTimestamp({...start,working:false,completedAt:10},stop,11),10,'a repeated Stop does not bump completion token');
   assert.equal(completionTimestamp({...start,working:false,completedAt:10},{provider:'claude',sessionId:'next',working:true},12),undefined,'a new session start discards the previous session token');
   assert.equal(completionTimestamp({...start,sessionId:'other',working:false,completedAt:10},{...stop,sessionId:'next'},12),undefined,'a previous conversation token is discarded when this process switches sessions');
+});
+
+test('real hook runner emits one activity and completion token for a prompt/Stop pair', async t => {
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-hook-runtime-'));
+  t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  const bin=path.join(home,'bin');
+  await fs.mkdir(bin);
+  const ps=path.join(bin,'ps');
+  await fs.writeFile(ps,'#!/bin/sh\nprintf "%s\\n" "${REKINDLE_TEST_PARENT_PID} 1 /bin/claude"\n',{mode:0o755});
+  const target=path.join(home,'.local/state/vscode-agent-session-restore/pi',`${process.pid}.json`);
+  const emit=(event)=>{
+    const result=spawnSync(process.execPath,[path.join(__dirname,'../src/session-hook.cjs'),'claude',event],{
+      input:JSON.stringify({session_id:'hook-session',cwd:home,prompt:'never persist this'}),encoding:'utf8',
+      env:{...process.env,HOME:home,TERM_PROGRAM:'vscode',PATH:`${bin}:${process.env.PATH}`,REKINDLE_TEST_PARENT_PID:String(process.pid)}
+    });
+    assert.equal(result.status,0,result.stderr);
+  };
+  emit('UserPromptSubmit');
+  const started=JSON.parse(await fs.readFile(target,'utf8'));
+  emit('Stop');
+  const stopped=JSON.parse(await fs.readFile(target,'utf8'));
+  assert.equal(stopped.working,false);
+  assert.ok(stopped.completedAt>0);
+  assert.ok(stopped.activityAt>=started.activityAt);
+  emit('Stop');
+  const repeated=JSON.parse(await fs.readFile(target,'utf8'));
+  assert.equal(repeated.completedAt,stopped.completedAt,'duplicate Stop does not create a completion token');
+  assert.equal(repeated.activityAt,stopped.activityAt,'duplicate Stop does not bump task activity');
+  assert.equal(JSON.stringify(repeated).includes('never persist'),false);
 });
 
 test('hook process ancestry cannot associate another terminal with a session', () => {
