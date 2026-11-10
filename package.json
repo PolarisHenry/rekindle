@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.8.0",
+  "version": "0.8.2",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -43,6 +43,12 @@
       {
         "command": "agentSessionRestore.addInFolder",
         "title": "New Agent Session Here",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.addHere",
+        "title": "New Session Here",
+        "icon": "$(add)",
         "category": "Rekindle"
       },
       {
@@ -226,9 +232,14 @@
       ],
       "view/item/context": [
         {
-          "command": "agentSessionRestore.addInFolder",
-          "when": "view == agentSessionRestore.sessions && viewItem == sessionFolder",
+          "command": "agentSessionRestore.addHere",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(sessionFolder|sessionAgent)$/",
           "group": "inline@0"
+        },
+        {
+          "command": "agentSessionRestore.addHere",
+          "when": "view == agentSessionRestore.sessions && viewItem =~ /^(sessionFolder|sessionAgent)$/",
+          "group": "1_create@1"
         },
         {
           "command": "agentSessionRestore.open",
@@ -378,7 +389,8 @@
       }
     },
     "configurationDefaults": {
-      "terminal.integrated.hideOnStartup": "whenEmpty"
+      "terminal.integrated.hideOnStartup": "whenEmpty",
+      "terminal.integrated.tabs.description": "${task}${separator}${local}${separator}${cwdFolder}${separator}${progress}"
     },
     "submenus": [
       {

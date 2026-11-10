@@ -18,7 +18,7 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 
 ## Optional manual sessions
 
-Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session**. Choose a working folder or browse to any folder; the active terminal's current folder is suggested when available. Right-click a folder in Explorer or a Rekindle folder group and choose **New Agent Session Here** to preselect it. After choosing an agent, select **Create New Session** or a saved conversation. Similar or identical titles never merge different conversation IDs. You can also enter an exact saved session ID. New conversations inherit configured startup arguments and provider icon; automatic restoration becomes available once the CLI has saved its actual conversation ID.
+Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session**. Choose a working folder or browse to any folder; the active terminal's current folder is suggested when available. Right-click a folder in Explorer or a Rekindle folder group and choose **New Agent Session Here** to preselect it. Each Folder or Agent group also has an inline **+** / **New Session Here** action; it carries that group's folder and agent into the picker. After choosing an agent, select **Create New Session** or a saved conversation. Similar or identical titles never merge different conversation IDs. You can also enter an exact saved session ID. New conversations inherit configured startup arguments and provider icon; automatic restoration becomes available once the CLI has saved its actual conversation ID.
 
 ## Agents
 
@@ -57,7 +57,7 @@ The default view shows enabled sessions in the current workspace and its subfold
 
 - **Search Sessions (magnifying glass):** filter names, agent labels, full paths, and session IDs as you type. Enter keeps the filter, Escape cancels the edit, and **Clear Search** removes it. Searches respect the current workspace/history scope.
 - **Enable Auto Restore / Disable Auto Restore:** use the row action or context menu to control restoration on the next workspace startup. There are no checkboxes. Disabling does not stop a running agent; its row is hidden until **Show History** is enabled.
-- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. An open but idle terminal has no running label. Set `agentSessionRestore.completionNotifications` to enable one non-focusing notification when a supported agent finishes; it is off by default.
+- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. Rekindle also sends VS Code's OSC 9;4 progress signal to the exact terminal PTY, so the terminal-tab description can show progress without changing its title or focusing it. An open but idle terminal has no running label. Set `agentSessionRestore.completionNotifications` to enable one non-focusing notification when a supported agent finishes; it is off by default.
 - **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
 - **… → Show History:** reveals automatically archived conversations and additional native history so they can be opened or enabled again.
 - Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
@@ -76,7 +76,9 @@ Deleting a terminal using its trash button disables its automatic restore and ke
 
 ## Settings
 
-Agent groups, session rows, and restored terminal tabs use bundled provider artwork. Codex uses the general OpenAI Blossom mark with light/dark theme variants; the other providers retain their original brand colors. See [asset notes](media/agents/README.md).
+Agent groups and restored terminal tabs use bundled provider artwork; session leaves use small provider-colored dots. Codex uses the general OpenAI Blossom mark with light/dark theme variants; the other providers retain their original brand colors. See [asset notes](media/agents/README.md).
+
+Rekindle adds `${progress}` to VS Code's default terminal-tab description template. This exposes busy/idle progress received through OSC 9;4, including for terminals with a custom tab title. An explicit `terminal.integrated.tabs.description` override remains in control; add `${progress}` to that template if you set one yourself. Rekindle does not write user settings.
 
 The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 
@@ -156,4 +158,4 @@ MIT licensed.
 
 ### Icons on existing shells
 
-VS Code's public Terminal API supplies icons at terminal creation but does not expose an icon setter for an existing terminal. Agent groups and tracked session rows acquire the provider icon automatically, and terminals created/restored by Rekindle have the provider icon from launch. A manually opened zsh keeps its current terminal-tab icon when an agent is detected; Rekindle does not kill or replace a running shell to change its artwork.
+VS Code's public Terminal API supplies icons at terminal creation but does not expose an icon setter for an existing terminal. Agent groups use provider artwork, session rows use provider-colored dots, and terminals created or restored by Rekindle keep their provider icon from launch. A manually opened zsh keeps its current terminal-tab icon when an agent is detected; Rekindle does not kill or replace a running shell to change its artwork.

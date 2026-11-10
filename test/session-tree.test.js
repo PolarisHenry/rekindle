@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { groupedSessions, SessionTree } = require('../src/session-tree');
+const { SESSION_COLORS, agentIcon, sessionIcon } = require('../src/agent-icons');
 const row = (id, cwd, enabled = true) => ({ id, provider: 'pi', sessionId: id, name: id, cwd, enabled });
 
 test('default sidebar hides disabled sessions while history reveals them', () => {
@@ -68,7 +69,8 @@ test('tree exposes both grouping levels before actionable session leaves', async
   const v = {
     TreeItem: class { constructor(label,collapsibleState) { Object.assign(this,{label,collapsibleState}); } },
     TreeItemCollapsibleState: { None:0, Collapsed:1, Expanded:2 },
-    ThemeIcon: class { constructor(id) {this.id=id;} },
+    ThemeIcon: class { constructor(id,color) {this.id=id;this.color=color;} },
+    ThemeColor: class { constructor(id) {this.id=id;} },
     Uri: {file:fsPath=>({fsPath})}, window:{terminals:[]}
   };
   for (const mode of ['folder','agent']) {
@@ -85,14 +87,29 @@ test('tree exposes both grouping levels before actionable session leaves', async
         const leafItem = SessionTree.prototype.getTreeItem.call(tree,leaves[0]);
         assert.equal(leafItem.command.arguments[0],leaves[0]);
         assert.equal(leafItem.checkboxState,undefined);
-        assert.ok(leafItem.iconPath.fsPath.endsWith('/media/agents/pi.svg'));
+        assert.equal(leafItem.iconPath.id,'circle-filled');
+        assert.equal(leafItem.iconPath.color.id,SESSION_COLORS[leaves[0].provider]);
+        if (child.kind === 'agent') assert.ok(groupItem.iconPath.fsPath.endsWith(`/media/agents/${child.provider}.svg`));
+        else assert.equal(groupItem.iconPath.id,'folder');
       }
     }
   }
 });
 
+test('session dots have stable provider colors while official artwork remains on groups and terminals', () => {
+  const v={ThemeIcon:class{constructor(id,color){this.id=id;this.color=color;}},ThemeColor:class{constructor(id){this.id=id;}},Uri:{file:fsPath=>({fsPath})}};
+  for (const provider of ['codex','pi','claude','agy']) {
+    const icon=sessionIcon(v,provider);
+    assert.equal(icon.id,'circle-filled');
+    assert.equal(icon.color.id,SESSION_COLORS[provider]);
+    const official=agentIcon(v,provider);
+    assert.ok(official.light||official.fsPath,'terminal/group artwork stays provider-specific');
+  }
+  assert.equal(agentIcon(v,'pi').fsPath.endsWith('/media/agents/pi.svg'),true);
+});
+
 test('idle open terminals are not labeled Running; active lifecycle state shows Working', () => {
-  const v={TreeItem:class{constructor(label,state){Object.assign(this,{label,collapsibleState:state});}},TreeItemCollapsibleState:{None:0},ThemeIcon:class{},Uri:{file:fsPath=>({fsPath})},window:{terminals:[]}};
+  const v={TreeItem:class{constructor(label,state){Object.assign(this,{label,collapsibleState:state});}},TreeItemCollapsibleState:{None:0},ThemeIcon:class{},ThemeColor:class{},Uri:{file:fsPath=>({fsPath})},window:{terminals:[]}};
   const terminal={};
   v.window.terminals.push(terminal);
   const entry=row('a','/work');

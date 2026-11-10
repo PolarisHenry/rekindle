@@ -5,6 +5,7 @@ const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd } = requi
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
 const { pickConversation } = require('./session-picker');
+const { resolveAddContext, chooseProvider, dispatchAddHere } = require('./session-add');
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 
@@ -62,15 +63,12 @@ function activate(context) {
 
   command('add', async target => {
     if (!vscode.workspace.workspaceFolders?.length) throw new Error('Open a workspace before adding a session.');
-    const provider = await vscode.window.showQuickPick([
-      { label: 'Codex', value: 'codex' }, { label: 'pi', value: 'pi' },
-      { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity CLI', value: 'agy' }
-    ], { title: 'Rekindle: Add Session', placeHolder: 'Choose an agent' });
+    const addContext = resolveAddContext(target);
+    const provider = await chooseProvider(vscode, addContext);
     if (!provider) return;
     const folders = vscode.workspace.workspaceFolders.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath);
-    const targetPath = typeof target === 'string' ? target : target?.cwd || target?.uri?.fsPath || target?.fsPath;
     const terminalCwd = vscode.window.activeTerminal?.shellIntegration?.cwd;
-    const suggested = targetPath || (terminalCwd?.scheme === 'file' ? terminalCwd.fsPath : undefined);
+    const suggested = addContext.cwd || (terminalCwd?.scheme === 'file' ? terminalCwd.fsPath : undefined);
     const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
     sessions.sort((a,b) => Number(isInWorkspace(b.cwd,folders))-Number(isInWorkspace(a.cwd,folders)) || b.updatedAt-a.updatedAt);
     const selected = await pickConversation(vscode, provider.label, sessions);
@@ -99,6 +97,7 @@ function activate(context) {
   command('addInFolder', async target => {
     return dispatchFolderAdd(target, (...args) => vscode.commands.executeCommand(...args));
   });
+  command('addHere', async target => dispatchAddHere(target, (...args) => vscode.commands.executeCommand(...args)));
 
   command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
   command('restore', async () => {

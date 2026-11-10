@@ -1,7 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { sessionKey, discoverSessions, isInWorkspace } = require('./core');
-const { agentIcon } = require('./agent-icons');
+const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
 
 function groupedSessions(tracked, history, showHistory, options = {}) {
@@ -47,7 +47,7 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
       const cwd = path.resolve(entry.cwd);
       const childKey = group.kind === 'agent' ? cwd : entry.provider;
       if (!children.has(childKey)) children.set(childKey, {
-        ...(group.kind === 'agent' ? { kind: 'folder', cwd } : { kind: 'agent', provider: entry.provider }),
+        ...(group.kind === 'agent' ? { kind: 'folder', cwd, provider: group.provider } : { kind: 'agent', provider: entry.provider, cwd: group.cwd }),
         groupId: JSON.stringify([groupBy, key, childKey]), sessions: []
       });
       children.get(childKey).sessions.push(entry);
@@ -191,7 +191,7 @@ class SessionTree {
     const working = this.manager.working?.has(node.id) === true;
     item.description = [node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', working && running && v.window.terminals.includes(running) ? 'Working' : ''].filter(Boolean).join(' · ');
     item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}\nClick to open. Use Enable / Disable Auto Restore to change restoration.`;
-    item.iconPath = agentIcon(v, node.provider);
+    item.iconPath = sessionIcon(v, node.provider);
     item.contextValue = node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession';
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;

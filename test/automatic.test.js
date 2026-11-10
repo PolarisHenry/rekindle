@@ -7,6 +7,10 @@ const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
 const {AutomaticTracker,descendants,parseProcesses,parseOpenFiles,readCodexLifecycle,consumeCompletion,installPiBridge}=require('../src/automatic');
+test('terminal tab description default exposes OSC progress without replacing the VS Code template',()=>{
+ const manifest=require('../package.json');
+ assert.equal(manifest.contributes.configurationDefaults['terminal.integrated.tabs.description'],'${task}${separator}${local}${separator}${cwdFolder}${separator}${progress}');
+});
 test('two ordinary terminal process trees remain distinct',()=>{
  const processes=parseProcesses(' 10 1 /bin/zsh\n 11 10 pi\n 20 1 /bin/zsh\n 21 20 codex\n 22 21 codex');
  assert.deepEqual([...descendants(10,processes)],[10,11]);
@@ -128,4 +132,65 @@ test('startup prepares provider hooks before restore and reuses the prepared bri
  });
  await testTracker.restoreAfterPrepare(async()=>isolated.push('restore'));
  assert.deepEqual(isolated,['restore'],'test mode does not write to user home directories');
+});
+
+test('tracked task state reaches only its terminal tty and close clears the mapping',async()=>{
+ const writes=[];
+ const handles=[];
+ const charDevice={isCharacterDevice:()=>true,uid:typeof process.getuid==='function'?process.getuid():0};
+ const io={
+  stat:async()=>charDevice,
+  open:async device=>{
+   writes.push({device,sequence:''});
+   const row=writes[writes.length-1];
+   const handle={stat:async()=>charDevice,write:async sequence=>{row.sequence+=sequence;},close:async()=>{}};
+   handles.push(handle);
+   return handle;
+  }
+ };
+ const terminal={processId:321,exitStatus:undefined,creationOptions:{env:{}}};
+ const {writeTerminalProgress}=require('../src/terminal-progress');
+ const execFile=async (_cmd,args)=>({stdout:args[3]==='321'?'ttys004\n':''});
+ const terminals=[terminal];
+ const transitions=[];
+ const tracker=new AutomaticTracker({window:{terminals}}, {entries:[],live:new Map()}, ()=>{}, {platform:'darwin',writeTerminalProgress:async(target,working)=>{transitions.push({target,working});return true;}});
+ await tracker.updateTerminalProgress(terminal,true,321);
+ await tracker.updateTerminalProgress(terminal,true,321);
+ await tracker.updateTerminalProgress(terminal,false,321);
+ assert.deepEqual(transitions.map(row=>row.working),[true,false],'repeated samples do not rewrite progress');
+ await tracker.updateTerminalProgress(terminal,true,321);
+ tracker.closed(terminal);
+ assert.equal(tracker.terminalProgress.has(terminal),false,'closed terminal state is discarded');
+ const idleTerminal={processId:322,exitStatus:undefined}; terminals.push(idleTerminal);
+ await tracker.updateTerminalProgress(idleTerminal,false,322);
+ await tracker.updateTerminalProgress(idleTerminal,false,322);
+ assert.equal(tracker.terminalProgress.get(idleTerminal),false,'idle is retained as a known progress state');
+ assert.equal(transitions.filter(row=>row.target===idleTerminal).length,1,'unknown to idle clears once and repeated idle is deduplicated');
+ const afterReload=[];
+ const reloaded=new AutomaticTracker({window:{terminals}}, {entries:[],live:new Map()}, ()=>{}, {platform:'darwin',writeTerminalProgress:async(target,working)=>{afterReload.push({target,working});return true;}});
+ await reloaded.updateTerminalProgress(terminal,false,321);
+ await reloaded.updateTerminalProgress(terminal,false,321);
+ assert.deepEqual(afterReload.map(row=>row.working),[false],'a fresh tracker clears prior busy state when its first sample sees idle');
+ await writeTerminalProgress(terminal,true,{platform:'darwin',terminals,fs:io,execFile});
+ await writeTerminalProgress(terminal,false,{platform:'darwin',terminals,fs:io,execFile});
+ assert.deepEqual(writes,[
+  {device:'/dev/ttys004',sequence:'\u001b]9;4;3\u0007'},
+  {device:'/dev/ttys004',sequence:'\u001b]9;4;0\u0007'}
+ ]);
+});
+
+test('terminal progress refuses foreign, non-terminal, exited, and non-macOS targets',async()=>{
+ const {writeTerminalProgress}=require('../src/terminal-progress');
+ let opened=0;
+ const fs={stat:async()=>({isCharacterDevice:()=>true,uid:process.getuid?.()??0}),open:async()=>{opened++;throw new Error('should not open');}};
+ const terminal={processId:42,exitStatus:undefined};
+ const execFile=async()=>({stdout:'ttys004\n'});
+ assert.equal(await writeTerminalProgress(terminal,true,{platform:'linux',terminals:[terminal],fs,execFile}),false);
+ assert.equal(await writeTerminalProgress(terminal,true,{platform:'darwin',terminals:[],fs,execFile}),false);
+ terminal.exitStatus={code:0};
+ assert.equal(await writeTerminalProgress(terminal,true,{platform:'darwin',terminals:[terminal],fs,execFile}),false);
+ terminal.exitStatus=undefined;
+ const foreignFs={stat:async()=>({isCharacterDevice:()=>true,uid:(process.getuid?.()??0)+1}),open:async()=>{opened++;throw new Error('should not open');}};
+ assert.equal(await writeTerminalProgress(terminal,true,{platform:'darwin',terminals:[terminal],fs:foreignFs,execFile}),false);
+ assert.equal(opened,0);
 });

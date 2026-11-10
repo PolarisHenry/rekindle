@@ -5,6 +5,7 @@ const os = require('node:os');
 const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const { installAgentBridges } = require('./bridges');
+const { writeTerminalProgress } = require('./terminal-progress');
 
 const registry = path.join(os.homedir(), '.local/state/vscode-agent-session-restore/pi');
 
@@ -100,6 +101,7 @@ class AutomaticTracker {
     this.testMode = options.testMode === true;
     this.installPi = options.installPiBridge || installPiBridge;
     this.installAgents = options.installAgentBridges || installAgentBridges;
+    this.writeProgress = options.writeTerminalProgress || writeTerminalProgress;
     this.preparePromise = undefined;
     this.busy = false;
     this.startedAt = Date.now();
@@ -108,6 +110,7 @@ class AutomaticTracker {
     this.codexLifecycle = new Map();
     this.notifiedCodexTurns = new Set();
     this.completionsSeen = new Map();
+    this.terminalProgress = new Map();
   }
 
   async sample() {
@@ -176,6 +179,7 @@ class AutomaticTracker {
           entry = observed.entry;
           dirty ||= observed.dirty;
           if (session.working === true) workingNow.add(entry.id);
+          if (typeof session.working === 'boolean') await this.updateTerminalProgress(terminal, session.working, pid);
           const notifications = this.vscode.workspace.getConfiguration('agentSessionRestore').get('completionNotifications', false);
           const gotCompletion = consumeCompletion(entry.id, session.completedAt, this.completionsSeen, this.startedAt);
           if (session.provider !== 'codex' && gotCompletion && notifications) {
@@ -194,6 +198,7 @@ class AutomaticTracker {
           // Leave mappings intact when an agent is still present but its exact session
           // cannot be read (e.g. a shared Codex daemon). Never guess from recency.
           const agentPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(p.command));
+          if (!agentPresent) await this.updateTerminalProgress(terminal, false, pid);
           if (ids.length > 1 && !entry.unresolved) { entry.unresolved = true; dirty = true; }
           if (!agentPresent) {
             const since = this.missing.get(entry.id) || Date.now();
@@ -212,6 +217,27 @@ class AutomaticTracker {
       if (dirty) await this.manager.save();
     } catch (error) { this.log(`Observer: ${error.message}`); }
     finally { this.busy = false; }
+  }
+
+  async updateTerminalProgress(terminal, working, pid) {
+    const known = this.terminalProgress.has(terminal);
+    const wasWorking = this.terminalProgress.get(terminal);
+    if (!known) {
+      const processId = await Promise.resolve(terminal.processId).catch(() => undefined);
+      if (processId !== pid) return;
+      if (await this.writeProgress(terminal, working, { platform: this.platform, terminals: this.vscode.window.terminals })) {
+        this.terminalProgress.set(terminal, working);
+      }
+      return;
+    }
+    if (wasWorking === working) return;
+    if (!working) {
+      if (await this.writeProgress(terminal, false, { platform: this.platform, terminals: this.vscode.window.terminals })) this.terminalProgress.set(terminal, false);
+      return;
+    }
+    const processId = await Promise.resolve(terminal.processId).catch(() => undefined);
+    if (processId !== pid) return;
+    if (await this.writeProgress(terminal, true, { platform: this.platform, terminals: this.vscode.window.terminals })) this.terminalProgress.set(terminal, true);
   }
 
   async start() {
@@ -239,6 +265,7 @@ class AutomaticTracker {
   }
 
   closed(terminal) {
+    this.terminalProgress.delete(terminal);
     const id = this.terminalIds.get(terminal);
     const entry = this.manager.entries.find(row => row.id === id);
     if (entry) {
@@ -249,6 +276,10 @@ class AutomaticTracker {
     this.terminalIds.delete(terminal);
   }
 
-  dispose() { clearInterval(this.timer); }
+  dispose() {
+    clearInterval(this.timer);
+    for (const [terminal, working] of this.terminalProgress) if (working) void this.writeProgress(terminal, false, { platform: this.platform, terminals: this.vscode.window.terminals });
+    this.terminalProgress.clear();
+  }
 }
 module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, consumeCompletion, installPiBridge };

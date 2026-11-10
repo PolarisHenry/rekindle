@@ -61,11 +61,15 @@ exports.run = async function () {
       for (const subgroup of subgroups) {
         const groupItem = api.tree.getTreeItem(subgroup);
         assert.ok(groupItem.id);
+        if (subgroup.kind === 'agent') {
+          const icon = groupItem.iconPath;
+          for (const uri of icon.light ? [icon.light,icon.dark] : [icon]) await fs.access(uri.fsPath);
+        } else assert.equal(groupItem.iconPath.id,'folder');
         for (const leaf of await api.tree.getChildren(subgroup)) {
           assert.equal(leaf.kind, undefined);
           const item = api.tree.getTreeItem(leaf);
-          const icon = item.iconPath;
-          for (const uri of icon.light ? [icon.light,icon.dark] : [icon]) await fs.access(uri.fsPath);
+          assert.equal(item.iconPath.id,'circle-filled');
+          assert.match(item.iconPath.color.id,/^terminal\.ansi/);
         }
       }
     }

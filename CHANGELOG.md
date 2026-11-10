@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2
+
+- Show supported agent busy/idle state in terminal tabs using OSC 9;4 progress on the exact terminal TTY and VS Code's `${progress}` description variable.
+- Add colored session dots and context-aware Add Session actions for Folder and Agent groups.
+
+## 0.8.1
+
+- Use provider-colored dots on session leaves while retaining official provider artwork on Agent groups and terminal tabs.
+- Add context-aware New Session actions to Folder and Agent groups, carrying folder/provider through both grouping layouts.
+
 ## 0.8.0
 
 - Default the sidebar to enabled sessions in the current workspace; expose paused sessions through Show History.

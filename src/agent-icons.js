@@ -8,4 +8,16 @@ function agentIcon(vscode, provider) {
   return new vscode.ThemeIcon('terminal');
 }
 
-module.exports = { agentIcon };
+const SESSION_COLORS = {
+  codex: 'terminal.ansiBlue',
+  pi: 'terminal.ansiGreen',
+  claude: 'terminal.ansiMagenta',
+  agy: 'terminal.ansiYellow'
+};
+
+function sessionIcon(vscode, provider) {
+  const color = SESSION_COLORS[provider] || 'terminal.ansiBrightWhite';
+  return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(color));
+}
+
+module.exports = { agentIcon, sessionIcon, SESSION_COLORS };
