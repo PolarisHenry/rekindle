@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3
+
+- Enable non-focusing completion notifications by default and add an explicit Sessions menu toggle.
+- Verify actual Codex lifecycle sampling clears Working and notifies once, including fast turns, while suppressing historical completions.
+
 ## 0.9.2
 
 - Default Claude Code launches and restores to `--permission-mode bypassPermissions`; users can override with an empty argument array.

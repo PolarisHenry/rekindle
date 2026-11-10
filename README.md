@@ -54,7 +54,7 @@ The default view shows enabled sessions in the current workspace and its subfold
 
 - **Search Sessions (magnifying glass):** filter names, agent labels, full paths, and session IDs as you type. Enter keeps the filter, Escape cancels the edit, and **Clear Search** removes it. Searches respect the current workspace/history scope.
 - **Enable Auto Restore / Disable Auto Restore:** use the row action or context menu to control restoration on the next workspace startup. There are no checkboxes. Disabling does not stop a running agent; its row is hidden until **Show History** is enabled.
-- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. Rekindle also sends VS Code's OSC 9;4 progress signal to the exact terminal PTY, so the terminal-tab description can show progress without changing its title or focusing it. An open but idle terminal has no running label. Set `agentSessionRestore.completionNotifications` to enable one non-focusing notification when a supported agent finishes; it is off by default.
+- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. Rekindle also sends VS Code's OSC 9;4 progress signal to the exact terminal PTY, so the terminal-tab description can show progress without changing its title or focusing it. An open but idle terminal has no running label. Completion notifications are on by default; use **Sessions → … → Disable Completion Notifications** to turn them off, or set `agentSessionRestore.completionNotifications` to `false`.
 - **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
 - **… → Show History:** reveals automatically archived conversations and additional native history so they can be opened or enabled again.
 - Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
@@ -82,6 +82,7 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `autoRestore` | `true` | Restore tracked terminals on workspace startup |
+| `completionNotifications` | `true` | Show a non-focusing VS Code notification when a supported agent finishes; toggle from the Sessions menu |
 | `codexCommand` | `codex` | Executable name or absolute path |
 | `piCommand` | `pi` | Executable name or absolute path |
 | `claudeCommand` | `claude` | Executable name or absolute path |

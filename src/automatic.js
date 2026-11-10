@@ -335,7 +335,7 @@ class AutomaticTracker {
           dirty ||= observed.dirty;
           if (session.working === true) workingNow.add(entry.id);
           if (typeof session.working === 'boolean') await this.updateTerminalProgress(terminal, session.working, pid);
-          const notifications = this.vscode.workspace.getConfiguration('agentSessionRestore').get('completionNotifications', false);
+          const notifications = this.vscode.workspace.getConfiguration('agentSessionRestore').get('completionNotifications', true);
           const gotCompletion = consumeCompletion(entry.id, session.completedAt, this.completionsSeen, this.startedAt);
           if (session.provider !== 'codex' && gotCompletion && notifications) {
             void this.vscode.window.showInformationMessage(`${entry.name} finished working.`);

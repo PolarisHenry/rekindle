@@ -7,6 +7,111 @@ const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
 const {AutomaticTracker,descendants,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
+
+async function codexSampleFixture(t, notifications = true, initialEvents = []) {
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-completion-sample-'));
+ t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+ const registry=path.join(dir,'registry');
+ await fs.mkdir(registry);
+ const sessionFile=path.join(dir,'rollout.jsonl');
+ await fs.writeFile(sessionFile,JSON.stringify({type:'session_meta',payload:{id:'codex-session',cwd:dir}})+'\n');
+ for(const event of initialEvents) await fs.appendFile(sessionFile,JSON.stringify({timestamp:new Date(event.timestamp ?? Date.now()).toISOString(),type:'event_msg',payload:event.payload})+'\n');
+ const entry={id:'entry-id',provider:'codex',sessionId:'codex-session',sessionFile,cwd:dir,name:'Codex task',enabled:true};
+ const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}}};
+ const messages=[],progress=[];
+ const vscode={
+  workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>key==='completionNotifications'?notifications:fallback})},
+  window:{terminals:[terminal],showInformationMessage:message=>{messages.push(message);return Promise.resolve();}}
+ };
+ const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set(),changed(){},save:async()=>{}};
+ manager.observe=session=>({entry:manager.entries.find(row=>row.sessionId===session.sessionId)||entry,dirty:false});
+ const tracker=new AutomaticTracker(vscode,manager,()=>{}, {
+  registry,
+  execFile:async command=>command==='ps'?{stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'}:{stdout:''},
+  writeTerminalProgress:async(_terminal,working)=>{progress.push(working);return true;}
+ });
+ return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress};
+}
+
+async function appendCodexEvent(file,payload,timestamp=Date.now()) {
+ await fs.appendFile(file,JSON.stringify({timestamp:new Date(timestamp).toISOString(),type:'event_msg',payload})+'\n');
+}
+
+test('Codex sample pipeline clears Working and shows exactly one completion toast',async t=>{
+ const fx=await codexSampleFixture(t,true);
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'turn-one'});
+ await fx.tracker.sample();
+ assert.equal(fx.manager.working.has(fx.entry.id),true);
+ assert.deepEqual(fx.messages,[]);
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'turn-one',completed_at:Math.ceil(Date.now()/1000),last_agent_message:'private text'});
+ await fx.tracker.sample();
+ assert.equal(fx.manager.working.has(fx.entry.id),false);
+ assert.deepEqual(fx.messages,['Codex task finished working.']);
+ await fx.tracker.sample();
+ assert.deepEqual(fx.messages,['Codex task finished working.'],'repeated idle sampling cannot notify twice');
+ assert.ok(fx.progress.includes(true));
+ assert.equal(fx.progress.at(-1),false);
+});
+
+test('Codex cold-start history is suppressed while a fast first-sample completion is notified',async t=>{
+ const oldTime=Date.now()-60000;
+ const old=await codexSampleFixture(t,true,[{timestamp:oldTime,payload:{type:'task_complete',turn_id:'old-turn',completed_at:Math.floor(oldTime/1000)}}]);
+ await old.tracker.sample();
+ assert.deepEqual(old.messages,[],'historical completions discovered on startup do not notify');
+ assert.equal(old.manager.working.has(old.entry.id),false);
+
+ const fast=await codexSampleFixture(t,true);
+ const afterStart=fast.tracker.startedAt+2000;
+ await appendCodexEvent(fast.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'fast-turn'},afterStart);
+ await appendCodexEvent(fast.sessionFile,{type:'task_complete',turn_id:'fast-turn',completed_at:Math.ceil(afterStart/1000)},afterStart+1);
+ await fast.tracker.sample();
+ assert.deepEqual(fast.messages,['Codex task finished working.'],'a task completed before first poll still produces one toast');
+ assert.equal(fast.manager.working.has(fast.entry.id),false);
+ await fast.tracker.sample();
+ assert.equal(fast.messages.length,1);
+});
+
+test('turn tracking clears Working when notifications are disabled',async t=>{
+ const fx=await codexSampleFixture(t,false);
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'quiet-turn'});
+ await fx.tracker.sample();
+ assert.equal(fx.manager.working.has(fx.entry.id),true);
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'quiet-turn',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.equal(fx.manager.working.has(fx.entry.id),false);
+ assert.deepEqual(fx.messages,[]);
+});
+
+test('Codex completion toasts stay bound to each session when two agents finish separately',async t=>{
+ const fx=await codexSampleFixture(t,true);
+ const secondDir=path.join(fx.dir,'second');
+ await fs.mkdir(secondDir);
+ const secondFile=path.join(secondDir,'rollout.jsonl');
+ await fs.writeFile(secondFile,JSON.stringify({type:'session_meta',payload:{id:'codex-session-2',cwd:secondDir}})+'\n');
+ const secondEntry={id:'entry-id-2',provider:'codex',sessionId:'codex-session-2',sessionFile:secondFile,cwd:secondDir,name:'Other task',enabled:true};
+ const secondTerminal={processId:Promise.resolve(200),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:secondEntry.id}}};
+ fx.manager.entries.push(secondEntry);
+ fx.manager.live.set(secondEntry.id,secondTerminal);
+ fx.vscode.window.terminals.push(secondTerminal);
+ fx.tracker.execFile=async command=>command==='ps'
+  ? {stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n200 1 /bin/zsh\n201 200 /usr/local/bin/codex\n'}
+  : {stdout:''};
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'first-turn'});
+ await appendCodexEvent(secondFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'second-turn'});
+ await fx.tracker.sample();
+ assert.deepEqual([...fx.manager.working].sort(),['entry-id','entry-id-2']);
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'first-turn',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.deepEqual(fx.messages,['Codex task finished working.']);
+ assert.equal(fx.manager.working.has('entry-id'),false);
+ assert.equal(fx.manager.working.has('entry-id-2'),true);
+ await appendCodexEvent(secondFile,{type:'task_complete',turn_id:'second-turn',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.deepEqual(fx.messages,['Codex task finished working.','Other task finished working.']);
+});
 test('terminal tab description default exposes OSC progress without replacing the VS Code template',()=>{
  const manifest=require('../package.json');
  assert.equal(manifest.contributes.configurationDefaults['terminal.integrated.tabs.description'],'${task}${separator}${local}${separator}${cwdFolder}${separator}${progress}');

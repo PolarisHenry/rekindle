@@ -9,6 +9,7 @@ const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirect
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
+const { CONTEXT_KEY: NOTIFICATION_CONTEXT, notificationsEnabled, setNotificationsEnabled } = require('./completion-notifications');
 
 async function activate(context) {
   const legacyExtension = vscode.extensions?.getExtension(OLD_EXTENSION_ID);
@@ -38,6 +39,11 @@ async function activate(context) {
   if (migrationResult.status === 'imported' || migrationResult.status === 'recovered-import') log(`Imported ${context.workspaceState.get('agentSessionRestore.sessions.v1', []).length} legacy session record(s).`);
   if (migrationResult.status === 'skipped-existing-data') log('Legacy session import skipped because this extension identity already has session data.');
   const manager = new SessionManager(vscode, context, log, refresh);
+  const syncNotificationContext = () => void vscode.commands.executeCommand('setContext', NOTIFICATION_CONTEXT, notificationsEnabled(vscode));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('agentSessionRestore.completionNotifications')) syncNotificationContext();
+  }));
+  syncNotificationContext();
   const startupShells = new Set(vscode.window.terminals.filter(unusedShell));
   // VS Code may open its default shell after extension activation has begun.
   // Observe the restoration phase, not just the initial terminal snapshot.
@@ -151,6 +157,14 @@ async function activate(context) {
   command('workspaceOnly', () => sessionTree.setWorkspaceOnly(true));
   command('refreshHistory', async () => { await sessionTree.loadHistory(true); sessionTree.refresh(); });
   command('launchSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id} Arguments`));
+  command('enableCompletionNotifications', async () => {
+    await setNotificationsEnabled(vscode, true);
+    await vscode.window.showInformationMessage('Completion notifications enabled.');
+  });
+  command('disableCompletionNotifications', async () => {
+    await setNotificationsEnabled(vscode, false);
+    await vscode.window.showInformationMessage('Completion notifications disabled.');
+  });
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
     if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User) {

@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -148,6 +148,18 @@
         "title": "Clear Search",
         "category": "Rekindle",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "agentSessionRestore.enableCompletionNotifications",
+        "title": "Enable Completion Notifications",
+        "category": "Rekindle",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "agentSessionRestore.disableCompletionNotifications",
+        "title": "Disable Completion Notifications",
+        "category": "Rekindle",
+        "icon": "$(bell-slash)"
       }
     ],
     "viewsContainers": {
@@ -230,6 +242,16 @@
           "command": "agentSessionRestore.clearSearch",
           "when": "view == agentSessionRestore.sessions && rekindle.searchActive",
           "group": "navigation@0.5"
+        },
+        {
+          "command": "agentSessionRestore.enableCompletionNotifications",
+          "when": "view == agentSessionRestore.sessions && !rekindle.completionNotifications",
+          "group": "3_settings@2"
+        },
+        {
+          "command": "agentSessionRestore.disableCompletionNotifications",
+          "when": "view == agentSessionRestore.sessions && rekindle.completionNotifications",
+          "group": "3_settings@2"
         }
       ],
       "view/item/context": [
@@ -297,8 +319,8 @@
         },
         "agentSessionRestore.completionNotifications": {
           "type": "boolean",
-          "default": false,
-          "description": "Show a VS Code notification when a supported agent finishes working."
+          "default": true,
+          "description": "Show a non-focusing VS Code notification when a supported agent finishes working. Enabled by default; turn off from the Sessions view menu or set false."
         },
         "agentSessionRestore.codexCommand": {
           "type": "string",
