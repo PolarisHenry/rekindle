@@ -97,16 +97,17 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 
 Executable settings accept paths, not shell command fragments or extra arguments. Use **Sessions → … → Agent Launch Settings** to configure extra arguments separately. Each array item is one argument; values containing spaces stay intact and are never evaluated as shell code.
 
-For example, to restore Codex and AGY with your preferred permission flags, add these to your VS Code User Settings (JSON):
+For example, to restore Codex and Claude Code with your preferred permission flags, add these to your VS Code User Settings (JSON):
 
 ```json
 {
   "agentSessionRestore.codexArguments": ["--yolo"],
+  "agentSessionRestore.claudeArguments": ["--permission-mode", "bypassPermissions"],
   "agentSessionRestore.agyArguments": ["--dangerously-skip-permissions"]
 }
 ```
 
-This launches `codex --yolo resume <saved-id>` and `agy --dangerously-skip-permissions --conversation <saved-id>`. Argument defaults are empty; these settings apply to the next restored/opened terminal and do not restart running agents.
+This launches `codex --yolo resume <saved-id>`, `claude --permission-mode bypassPermissions --resume <saved-id>`, and `agy --dangerously-skip-permissions --conversation <saved-id>`. These are personal opt-in examples; argument defaults remain empty. Settings apply to the next restored/opened terminal and do not restart running agents.
 
 ## Local observers
 

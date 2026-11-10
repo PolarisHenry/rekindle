@@ -10,6 +10,12 @@ The confirmed Marketplace Publisher ID is `ArionLee`; the formal extension ident
 
 Packaging and manual upload do not require a PAT or an Azure DevOps organization. Automated publishing can be configured separately using the current VS Code publishing guidance.
 
+## Direct CLI publishing
+
+For an interactive local setup, authenticate once with `npx vsce login ArionLee`; enter the PAT only at the hidden local prompt and never share it in chat. After increasing `package.json`'s version, run `npm run publish:marketplace` to package and publish the VSIX. Version `0.9.0` is already published and cannot be reused for another release.
+
+For automation, VS Code recommends GitHub Actions Trusted Publishing with OIDC to avoid a long-lived PAT. This repository currently has `@vscode/vsce` 3.9.2, whose CLI does not expose an OIDC flag; upgrade to a VSCE version that supports the official setup before enabling that route. See the official [trusted publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#github-actions).
+
 ## Release checks
 
 - `LICENSE` is present and `package.json` declares `MIT`.

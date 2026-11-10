@@ -28,7 +28,8 @@
     "test": "node --test test/*.test.js",
     "test:integration": "node test/run-integration.js",
     "package:legacy-bridge": "node scripts/package-legacy-bridge.js",
-    "package": "vsce package --allow-star-activation --out rekindle.vsix"
+    "package": "vsce package --allow-star-activation --out rekindle.vsix",
+    "publish:marketplace": "npm run package && vsce publish --packagePath rekindle.vsix"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.7.1"
