@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { discoverSessions, resumeArguments, resumeCommand, launchOptions, isInWorkspace } = require('../src/core');
+const { discoverSessions, resumeArguments, resumeCommand, launchOptions, isInWorkspace, resolveTargetFolder, dispatchFolderAdd } = require('../src/core');
 
 test('resume is bound to exact IDs, never the most recent conversation', () => {
   assert.deepEqual(resumeArguments({ provider: 'codex', sessionId: 'specific-id' }), ['resume', 'specific-id']);
@@ -90,6 +90,19 @@ test('legacy Codex rollout and title index work without SQLite', async t => {
 test('workspace filtering honors path boundaries', () => {
   assert.equal(isInWorkspace('/project/sub', ['/project']), true);
   assert.equal(isInWorkspace('/project-other', ['/project']), false);
+});
+
+test('folder context targets resolve from sidebar group, Explorer URI, and paths', () => {
+  assert.equal(resolveTargetFolder({kind:'folder',cwd:'/work/sub'}),'/work/sub');
+  assert.equal(resolveTargetFolder({fsPath:'/work/explorer'}),'/work/explorer');
+  assert.equal(resolveTargetFolder({uri:{fsPath:'/work/uri'}}),'/work/uri');
+  assert.equal(resolveTargetFolder('/work/path'),'/work/path');
+});
+
+test('folder action forwards a sidebar folder group cwd into Add Session', async () => {
+  const calls=[];
+  await dispatchFolderAdd({kind:'folder',cwd:'/workspace/sub'},(...args)=>calls.push(args));
+  assert.deepEqual(calls,[['agentSessionRestore.add','/workspace/sub']]);
 });
 
 test('Codex paginated history is discoverable from its read-only SQLite index', async t => {

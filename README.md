@@ -14,20 +14,20 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Preserves normal shell integration by launching the agent inside your regular shell.
 - Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
 - Observes the entire restoration phase and removes only untouched, idle startup shells.
-- Provides an English **Rekindle → Sessions** sidebar with Folder → Agent → Session or Agent → Folder → Session grouping. By default, it shows enabled sessions in the current workspace, prioritizing the current terminal folder.
+- Provides an English **Rekindle → Sessions** sidebar with Folder → Agent → Session or Agent → Folder → Session grouping. By default, it shows tracked sessions in the current workspace, prioritizing the current terminal folder.
 
 ## Optional manual sessions
 
-Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session** to add an existing conversation manually. All four agents offer a local history picker and also accept an exact saved session ID and project folder. Automatic tracking remains the default and requires no manual list.
+Use the **+** button in the Rekindle sidebar or run **Rekindle: Add Session**. Choose a working folder or browse to any folder; the active terminal's current folder is suggested when available. Right-click a folder in Explorer or a Rekindle folder group and choose **New Agent Session Here** to preselect it. After choosing an agent, select **Create New Session** or a saved conversation. Similar or identical titles never merge different conversation IDs. You can also enter an exact saved session ID. New conversations inherit configured startup arguments and provider icon; automatic restoration becomes available once the CLI has saved its actual conversation ID.
 
 ## Agents
 
 | Agent | How it is tracked | Restore command |
 | --- | --- | --- |
 | Codex | Process ancestry and open session files | `codex resume <id>` |
-| pi | A local session-event extension | `pi --session <file>` |
-| Claude Code | Local `SessionStart` and `UserPromptSubmit` hooks | `claude --resume <id>` |
-| Antigravity CLI / AGY | Local `SessionStart` and `PreInvocation` hooks | `agy --conversation <id>` |
+| pi | Local lifecycle extension (`agent_start` / `agent_settled`) | `pi --session <file>` |
+| Claude Code | Local `SessionStart`, `UserPromptSubmit`, and `Stop` hooks | `claude --resume <id>` |
+| Antigravity CLI / AGY | Local `SessionStart`, `PreInvocation`, and `Stop` hooks | `agy --conversation <id>` |
 
 Automatic tracking is currently implemented for **macOS**. Other platforms are not yet supported by the process observer.
 
@@ -49,15 +49,17 @@ The package identifier and settings namespace remain `local-tools.agent-session-
 
 Open the Sessions header's **…** menu for view options:
 
-- **Show History / Hide History:** include paused records and saved local conversations from Codex, pi, Claude Code, and AGY. Off by default.
+- **Show History / Hide History:** include automatically archived records and additional saved local conversations from Codex, pi, Claude Code, and AGY. Off by default.
 - **Show All Folders / Current Workspace Only:** restrict the list to the open workspace folders by default, or browse conversations from other projects.
 - **Group By → By Folder / By Agent:** choose **Folder → Agent → Session** or **Agent → Folder → Session**. Both modes retain the second grouping level; folders use full paths for identity and tooltips.
 
-The current terminal folder is prioritized, followed by other workspace folders and then external folders when enabled. View choices are remembered per workspace and shown in the view description. These display filters do not change which enabled sessions restore at startup. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
+The default view shows enabled sessions in the current workspace and its subfolders. **Show All Folders** broadens the scope; **Show History** also reveals paused, archived, and discovered conversations. The current terminal folder is prioritized. View choices are remembered per workspace and shown in the view description. These display filters do not change which enabled sessions restore at startup. History is loaded on demand, cached briefly, and can be updated with **Refresh History**.
 
-- **Session checkbox / Enable Auto Restore / Disable Auto Restore:** controls restoration on the next workspace startup. Disabling does not stop a running agent.
+- **Search Sessions (magnifying glass):** filter names, agent labels, full paths, and session IDs as you type. Enter keeps the filter, Escape cancels the edit, and **Clear Search** removes it. Searches respect the current workspace/history scope.
+- **Enable Auto Restore / Disable Auto Restore:** use the row action or context menu to control restoration on the next workspace startup. There are no checkboxes. Disabling does not stop a running agent; its row is hidden until **Show History** is enabled.
+- Session rows show **Working** only for supported pi, Claude Code, AGY, and Codex lifecycle events. An open but idle terminal has no running label. Set `agentSessionRestore.completionNotifications` to enable one non-focusing notification when a supported agent finishes; it is off by default.
 - **Click a session or Open Session:** opens it now. Opening a historical session once does not enable automatic restoration.
-- **… → Show History:** reveals disabled sessions so they can be opened or enabled again.
+- **… → Show History:** reveals automatically archived conversations and additional native history so they can be opened or enabled again.
 - Switching conversations in an observed terminal archives the old conversation rather than overwriting its record.
 
 ## Python environment activation
@@ -70,11 +72,11 @@ For ordinary or revived terminals, Rekindle also observes shell command start/en
 
 Closing VS Code preserves tracked sessions. Reopening the same workspace restores their saved conversation history. It does **not** keep closed agents running in the background or automatically send another prompt.
 
-Deleting a terminal using its trash button disables its automatic restore and retains it in history. Exiting an agent back to a regular shell archives its record after roughly ten seconds. **Forget Session** removes Rekindle's mapping without deleting the native CLI conversation; native history can still show that conversation.
+Deleting a terminal using its trash button disables its automatic restore and keeps its tracked row visible. Exiting an agent back to a regular shell archives its record after roughly ten seconds. **Forget Session** removes Rekindle's mapping without deleting the native CLI conversation; native history can still show that conversation.
 
 ## Settings
 
-Agent groups, session rows, and restored terminal tabs use bundled official provider artwork. Codex has separate light/dark assets; the other providers retain their original brand colors. See [asset sources](media/agents/README.md).
+Agent groups, session rows, and restored terminal tabs use bundled provider artwork. Codex uses the general OpenAI Blossom mark with light/dark theme variants; the other providers retain their original brand colors. See [asset notes](media/agents/README.md).
 
 The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 
@@ -112,12 +114,12 @@ This launches `codex --yolo resume <saved-id>` and `agy --dangerously-skip-permi
 Rekindle installs a small local bridge for each event-based provider. Existing hook definitions are preserved; changed configuration files receive a timestamped backup.
 
 - pi extension: `~/.pi/agent/extensions/vscode-agent-session-restore.ts`
-- Claude Code: an observer appended to `hooks.SessionStart` and `hooks.UserPromptSubmit` in its user settings (`CLAUDE_CONFIG_DIR` is respected)
+- Claude Code: an observer appended to `hooks.SessionStart`, `hooks.UserPromptSubmit`, and `hooks.Stop` in its user settings (`CLAUDE_CONFIG_DIR` is respected)
 - AGY: the `rekindle` definition in `~/.gemini/config/hooks.json`
 - Shared observer script: `~/.local/share/rekindle/session-hook.cjs`
 - Observer records: `~/.local/state/vscode-agent-session-restore/pi/`
 
-Observer records contain process and session IDs, paths, provider, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Agent CLIs retain their normal authentication, network, hooks, and permission behavior. Rekindle never adds approval-bypass flags.
+Observer records contain process and session IDs, paths, provider, working state, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Codex lifecycle reads only `task_started` / `task_complete` event metadata from the exact rollout file already associated with its terminal. Agent CLIs retain their normal authentication, network, hooks, and permission behavior. Rekindle only passes approval-bypass flags when you explicitly configure them.
 
 On uninstall, remove the pi observer file, the two Claude hook entries whose command references `rekindle/session-hook.cjs`, the AGY `rekindle` definition, and the shared observer script/records if you no longer need them. Leave other hooks intact.
 
@@ -137,7 +139,7 @@ npm run test:integration
 npm run package
 ```
 
-Unit tests cover session identity, argument quoting, hook formats, merging existing configurations, process ownership, focus, and startup-shell safeguards. Integration tests use a real local VS Code installation with isolated user data and simulated agent processes, including the real hook reporter. Python activation tests run an actual shell `source` command through a simulated provider API and verify that agent processes inherit the activated environment. Sidebar tests verify folder grouping, historical visibility, one-time opening, and persisted enable/disable state. They restart VS Code to verify persistence and provider-specific restore arguments. No model calls are made. Set `VSCODE_EXECUTABLE_PATH` if VS Code is installed elsewhere.
+Unit tests cover session identity, argument quoting, hook formats, merging existing configurations, process ownership, focus, and startup-shell safeguards. Integration tests use a real local VS Code installation with isolated user data and simulated agent processes, including the real hook reporter. Python activation tests run an actual shell `source` command through a simulated provider API and verify that agent processes inherit the activated environment. Sidebar tests verify both grouping levels, search, similar-name creation, historical visibility, stable sorting, one-time opening, and persisted enable/disable state. They restart VS Code to verify persistence and provider-specific restore arguments. No model calls are made. Set `VSCODE_EXECUTABLE_PATH` if VS Code is installed elsewhere.
 
 A GitHub Actions example is included in `docs/ci.example.yml`. To enable it, move it to `.github/workflows/ci.yml` using an account token with workflow permissions.
 
@@ -151,3 +153,7 @@ The original mark is maintained as SVG plus a PNG extension icon. Regenerate it 
 - [Antigravity hooks](https://antigravity.google/docs/hooks/)
 
 MIT licensed.
+
+### Icons on existing shells
+
+VS Code's public Terminal API supplies icons at terminal creation but does not expose an icon setter for an existing terminal. Agent groups and tracked session rows acquire the provider icon automatically, and terminals created/restored by Rekindle have the provider icon from launch. A manually opened zsh keeps its current terminal-tab icon when an agent is detected; Rekindle does not kill or replace a running shell to change its artwork.

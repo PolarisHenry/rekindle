@@ -22,20 +22,22 @@ async function installAgentBridges(home = os.homedir()) {
   const target = path.join(home, '.local/share/rekindle/session-hook.cjs');
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.copyFile(path.join(__dirname, 'session-hook.cjs'), target);
-  const command = provider => `node ${shellQuote(target)} ${provider}`;
+  const command = (provider, event) => `node ${shellQuote(target)} ${provider}${event ? ` ${event}` : ''}`;
   const claudeHome = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
   await updateJson(path.join(claudeHome, 'settings.json'), data => {
     data.hooks ||= {};
-    for (const event of ['SessionStart', 'UserPromptSubmit']) {
+    for (const event of ['SessionStart', 'UserPromptSubmit', 'Stop']) {
       data.hooks[event] ||= [];
       data.hooks[event] = data.hooks[event].filter(group => !group.hooks?.some(hook => hook.rekindle === true || hook.command?.includes('/rekindle/session-hook.cjs')));
       data.hooks[event].push({ hooks: [{ type: 'command', command: command('claude'), timeout: 5 }] });
     }
   });
   await updateJson(path.join(home, '.gemini/config/hooks.json'), data => {
-    data.rekindle = {
-      SessionStart: [{ type: 'command', command: command('agy'), timeout: 5 }],
-      PreInvocation: [{ type: 'command', command: command('agy'), timeout: 5 }]
+    const existing = data.rekindle || {};
+    data.rekindle = { ...existing,
+      SessionStart: [{ type: 'command', command: command('agy', 'SessionStart'), timeout: 5 }],
+      PreInvocation: [{ type: 'command', command: command('agy', 'PreInvocation'), timeout: 5 }],
+      Stop: [{ type: 'command', command: command('agy', 'Stop'), timeout: 5 }]
     };
   });
 }

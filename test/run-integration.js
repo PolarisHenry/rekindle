@@ -32,7 +32,7 @@ async function main() {
     'telemetry.telemetryLevel': 'off',
     'workbench.startupEditor': 'none'
   }));
-  const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore'];
+  const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore', 'new-session'];
   for (const phase of phases) {
     if (phase === 'environment-restore') {
       const python = path.join(data, 'extensions/ms-python.vscode-python-envs-1.42.0');

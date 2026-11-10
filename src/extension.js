@@ -1,9 +1,10 @@
 'use strict';
 
 const vscode = require('vscode');
-const { cleanTitle, discoverSessions, isInWorkspace } = require('./core');
+const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd } = require('./core');
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
+const { pickConversation } = require('./session-picker');
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 
@@ -23,18 +24,17 @@ function activate(context) {
     if (!terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID) startupShells.add(terminal);
   });
   context.subscriptions.push(startupListener);
-  const tracker = new AutomaticTracker(vscode, manager, log);
+  const tracker = new AutomaticTracker(vscode, manager, log, {
+    testMode: context.extensionMode === vscode.ExtensionMode.Test || Boolean(process.env.AGENT_RESTORE_TEST_PHASE)
+  });
   context.subscriptions.push(tracker);
   sessionTree = new SessionTree(vscode, manager, context, log);
   const view = vscode.window.createTreeView('agentSessionRestore.sessions', {
-    treeDataProvider: sessionTree,
-    manageCheckboxStateManually: true
+    treeDataProvider: sessionTree
   });
   sessionTree.attachView(view);
   context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(() => sessionTree.refresh()), vscode.window.onDidChangeActiveTextEditor(() => sessionTree.refresh()));
-  context.subscriptions.push(output, sessionTree, view, view.onDidChangeCheckboxState(event => {
-    void sessionTree.checked(event).catch(error => { log(error.message); void vscode.window.showErrorMessage(`Rekindle: ${error.message}`); });
-  }));
+  context.subscriptions.push(output, sessionTree, view);
 
   const command = (name, callback) => context.subscriptions.push(vscode.commands.registerCommand(`agentSessionRestore.${name}`, async (...args) => {
     try { return await callback(...args); }
@@ -47,45 +47,57 @@ function activate(context) {
     return picked?.entry;
   }
 
-  command('add', async () => {
+  async function chooseDirectory(folders, suggested) {
+    const initial = suggested && typeof suggested === 'string' ? suggested : undefined;
+    const choices = [...new Set([initial, ...folders].filter(Boolean))];
+    const directory = await vscode.window.showQuickPick([
+      ...choices.map(cwd => ({ label: cwd, cwd, description: cwd === initial ? 'Current folder' : undefined })),
+      { label: '$(folder-opened) Browse for any folder…', browse: true }
+    ], { title: 'Conversation working directory' });
+    if (!directory) return;
+    if (!directory.browse) return directory.cwd;
+    const selected = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder' });
+    return selected?.[0]?.fsPath;
+  }
+
+  command('add', async target => {
     if (!vscode.workspace.workspaceFolders?.length) throw new Error('Open a workspace before adding a session.');
     const provider = await vscode.window.showQuickPick([
       { label: 'Codex', value: 'codex' }, { label: 'pi', value: 'pi' },
       { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity CLI', value: 'agy' }
     ], { title: 'Rekindle: Add Session', placeHolder: 'Choose an agent' });
     if (!provider) return;
-    let session;
-    const folders = vscode.workspace.workspaceFolders.map(folder => folder.uri.fsPath);
-    if (['codex', 'pi', 'claude', 'agy'].includes(provider.value)) {
-      const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
-      sessions.sort((a, b) => Number(isInWorkspace(b.cwd, folders)) - Number(isInWorkspace(a.cwd, folders)) || b.updatedAt - a.updatedAt);
-      const selected = await vscode.window.showQuickPick([
-        ...sessions.map(row => ({ label: row.title, description: row.cwd, detail: row.sessionId, session: row })),
-        { label: '$(edit) Enter a session ID', manual: true }
-      ], { title: `Add ${provider.label} Session`, matchOnDescription: true, matchOnDetail: true });
-      if (!selected) return;
-      session = selected.session;
-    }
+    const folders = vscode.workspace.workspaceFolders.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath);
+    const targetPath = typeof target === 'string' ? target : target?.cwd || target?.uri?.fsPath || target?.fsPath;
+    const terminalCwd = vscode.window.activeTerminal?.shellIntegration?.cwd;
+    const suggested = targetPath || (terminalCwd?.scheme === 'file' ? terminalCwd.fsPath : undefined);
+    const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
+    sessions.sort((a,b) => Number(isInWorkspace(b.cwd,folders))-Number(isInWorkspace(a.cwd,folders)) || b.updatedAt-a.updatedAt);
+    const selected = await pickConversation(vscode, provider.label, sessions);
+    if (!selected) return;
+    let session = selected.session;
     if (!session) {
-      const sessionId = await vscode.window.showInputBox({ title: `Add ${provider.label} Session`, prompt: 'Enter the exact ID of an existing saved conversation.', validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? 'Enter a valid saved session ID.' : undefined });
-      if (!sessionId) return;
-      const directory = await vscode.window.showQuickPick([
-        ...folders.map(cwd => ({ label: cwd, cwd })), { label: '$(folder-opened) Browse for a project folder', browse: true }
-      ], { title: 'Conversation working directory' });
-      if (!directory) return;
-      let cwd = directory.cwd;
-      if (directory.browse) {
-        const selected = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder' });
-        cwd = selected?.[0]?.fsPath;
+      let sessionId;
+      if (!selected.create) {
+        sessionId = await vscode.window.showInputBox({ title: `Add ${provider.label} Session`, prompt: 'Enter the exact ID of an existing saved conversation.', validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? 'Enter a valid saved session ID.' : undefined });
+        if (!sessionId) return;
       }
+      const cwd = await chooseDirectory(folders, suggested);
       if (!cwd) return;
-      session = { provider: provider.value, sessionId: sessionId.trim(), cwd, title: sessionId.trim() };
+      session = { provider: provider.value, sessionId: sessionId?.trim(), cwd, title: sessionId?.trim() || 'New Session' };
     }
-    const name = await vscode.window.showInputBox({ title: 'Terminal name', value: `${provider.label} · ${cleanTitle(session.title).slice(0, 45)}`, validateInput: value => value.trim() ? undefined : 'Enter a name.' });
-    if (!name) return;
+    const name = selected.create && selected.name ? selected.name : await vscode.window.showInputBox({
+      title: 'Terminal name', value: selected.create ? '' : `${provider.label} · ${cleanTitle(session.title).slice(0,45)}`,
+      validateInput: value => value.trim() ? undefined : 'Enter a name.'
+    });
+    if (!name?.trim()) return;
+    if (selected.create) return manager.create(session, cleanTitle(name));
     const entry = await manager.add(session, cleanTitle(name));
     await manager.setEnabled(entry.id, true);
     await manager.open(entry);
+  });
+  command('addInFolder', async target => {
+    return dispatchFolderAdd(target, (...args) => vscode.commands.executeCommand(...args));
   });
 
   command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
@@ -105,10 +117,13 @@ function activate(context) {
     const name = await vscode.window.showInputBox({ title: 'Rename Terminal (applies next time)', value: chosen.name, validateInput: value => value.trim() ? undefined : 'Enter a name' });
     if (!name) return;
     chosen.name = cleanTitle(name);
+    chosen.customName = true;
     await manager.save();
   });
   command('enable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, true); });
   command('disable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, false); });
+  command('search', () => sessionTree.searchSessions());
+  command('clearSearch', () => sessionTree.setSearch(''));
   command('showHistory', () => sessionTree.setShowHistory(true));
   command('hideHistory', () => sessionTree.setShowHistory(false));
   command('groupByFolder', () => sessionTree.setGrouping('folder'));
@@ -123,6 +138,7 @@ function activate(context) {
       const entry = manager.entries.find(item => manager.live.get(item.id) === terminal);
       if (entry) void manager.setEnabled(entry.id, false);
     }
+    tracker.closed(terminal);
     manager.closed(terminal);
   }));
   refresh();
@@ -133,7 +149,7 @@ function activate(context) {
     try {
       if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length || manager.config().autoRestore === false) return;
       await tracker.sample();
-      failures = await manager.restore();
+      failures = await tracker.restoreAfterPrepare(() => manager.restore());
       await removeStartupShells(vscode, manager, startupShells, log);
       // hideOnStartup=whenEmpty prevents VS Code from creating a competing shell.
       // If there were no agents (or every restore failed), keep normal terminal UX.

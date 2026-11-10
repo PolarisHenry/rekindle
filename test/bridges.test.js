@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { installAgentBridges } = require('../src/bridges');
-const { normalize, owningProcess } = require('../src/session-hook.cjs');
+const { normalize, owningProcess, completionTimestamp } = require('../src/session-hook.cjs');
 const { resumeArguments } = require('../src/core');
 const { unusedShell, removeStartupShells } = require('../src/startup');
 
@@ -21,6 +21,23 @@ test('provider hook payloads retain only session metadata, not prompts or tool i
   assert.equal(agy.sessionId, 'b');
   assert.equal('lastUserInput' in agy, false);
   assert.equal(normalize('claude', { session_id: 'sub', cwd: '/workspace', agent_id: 'nested' }), null);
+});
+
+test('supported provider lifecycle hooks report only working state and metadata', () => {
+  assert.equal(normalize('claude', { session_id:'c', cwd:'/work', hook_event_name:'UserPromptSubmit', prompt:'secret' }).working, true);
+  assert.equal(normalize('claude', { session_id:'c', cwd:'/work', hook_event_name:'Stop' }).working, false);
+  assert.equal(normalize('agy', { conversationId:'g', workspacePaths:['/work'] }, 'PreInvocation').working, true);
+  assert.equal(normalize('agy', { conversationId:'g', workspacePaths:['/work'], lastUserInput:'secret' }, 'Stop').working, false);
+});
+
+test('hook completion tokens require a matching observed start and ignore duplicate stop', () => {
+  const start={provider:'claude',sessionId:'c',working:true};
+  const stop={provider:'claude',sessionId:'c',working:false,completionSignal:true};
+  assert.equal(completionTimestamp(undefined,stop,10),undefined,'startup with an old stop does not create a token');
+  assert.equal(completionTimestamp(start,stop,10),10);
+  assert.equal(completionTimestamp({...start,working:false,completedAt:10},stop,11),10,'a repeated Stop does not bump completion token');
+  assert.equal(completionTimestamp({...start,working:false,completedAt:10},{provider:'claude',sessionId:'next',working:true},12),undefined,'a new session start discards the previous session token');
+  assert.equal(completionTimestamp({...start,sessionId:'other',working:false,completedAt:10},{...stop,sessionId:'next'},12),undefined,'a previous conversation token is discarded when this process switches sessions');
 });
 
 test('hook process ancestry cannot associate another terminal with a session', () => {
@@ -42,7 +59,9 @@ test('bridge installation preserves existing hooks and stays idempotent', async 
   assert.equal(claude.hooks.SessionStart.length, 2);
   assert.equal(claude.hooks.SessionStart[0].hooks[0].command, 'echo existing');
   const agy = JSON.parse(await fs.readFile(path.join(home, '.gemini/config/hooks.json')));
-  assert.ok(agy.rekindle.SessionStart[0].command.endsWith(' agy'));
+  assert.ok(agy.rekindle.SessionStart[0].command.endsWith(' agy SessionStart'));
+  assert.ok(agy.rekindle.PreInvocation[0].command.endsWith(' agy PreInvocation'));
+  assert.ok(agy.rekindle.Stop[0].command.endsWith(' agy Stop'));
 });
 
 test('only an untouched default shell is eligible for startup cleanup', () => {

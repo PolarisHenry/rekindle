@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.6.0",
+  "version": "0.8.0",
   "publisher": "local-tools",
   "license": "MIT",
   "engines": {
@@ -38,6 +38,11 @@
         "command": "agentSessionRestore.add",
         "title": "Add Session",
         "icon": "$(add)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.addInFolder",
+        "title": "New Agent Session Here",
         "category": "Rekindle"
       },
       {
@@ -123,6 +128,18 @@
         "command": "agentSessionRestore.launchSettings",
         "title": "Agent Launch Settings",
         "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.search",
+        "title": "Search Sessions",
+        "category": "Rekindle",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentSessionRestore.clearSearch",
+        "title": "Clear Search",
+        "category": "Rekindle",
+        "icon": "$(clear-all)"
       }
     ],
     "viewsContainers": {
@@ -195,9 +212,24 @@
           "command": "agentSessionRestore.launchSettings",
           "when": "view == agentSessionRestore.sessions",
           "group": "3_settings@1"
+        },
+        {
+          "command": "agentSessionRestore.search",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@0"
+        },
+        {
+          "command": "agentSessionRestore.clearSearch",
+          "when": "view == agentSessionRestore.sessions && rekindle.searchActive",
+          "group": "navigation@0.5"
         }
       ],
       "view/item/context": [
+        {
+          "command": "agentSessionRestore.addInFolder",
+          "when": "view == agentSessionRestore.sessions && viewItem == sessionFolder",
+          "group": "inline@0"
+        },
         {
           "command": "agentSessionRestore.open",
           "when": "view == agentSessionRestore.sessions && viewItem =~ /^(enabledSession|disabledSession|historySession)$/",
@@ -224,6 +256,13 @@
           "group": "inline@2"
         }
       ],
+      "explorer/context": [
+        {
+          "command": "agentSessionRestore.addInFolder",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "1_create@1"
+        }
+      ],
       "rekindle.groupBy": [
         {
           "command": "agentSessionRestore.groupByFolder",
@@ -242,6 +281,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically restore tracked agent terminals when opening this workspace."
+        },
+        "agentSessionRestore.completionNotifications": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a VS Code notification when a supported agent finishes working."
         },
         "agentSessionRestore.codexCommand": {
           "type": "string",

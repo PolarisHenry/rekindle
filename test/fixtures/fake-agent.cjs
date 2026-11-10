@@ -4,9 +4,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const data = process.env.AGENT_RESTORE_TEST_DATA;
 const args = process.argv.slice(2);
-if (args[0] === 'capture') {
+if (args[0] === 'capture' || args.length === 0) {
   process.title = 'codex';
-  const id = args[1];
+  const id = args[1] || require('node:crypto').randomUUID();
   const base = path.join(data, 'codex');
   fs.mkdirSync(path.join(base, 'thread-writer-locks'), { recursive: true });
   fs.mkdirSync(path.join(base, 'sessions'), { recursive: true });

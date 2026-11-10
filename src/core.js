@@ -20,14 +20,22 @@ function shellQuote(value) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-function resumeArguments(session, config = {}) {
-  if (!['codex', 'pi', 'claude', 'agy'].includes(session.provider) || typeof session.sessionId !== 'string' || !session.sessionId.trim()) {
-    throw new Error('Invalid agent session');
-  }
-  const extra = config[`${session.provider}Arguments`] ?? [];
+function startupArguments(provider, config = {}) {
+  if (!['codex', 'pi', 'claude', 'agy'].includes(provider)) throw new Error('Invalid agent provider');
+  const extra = config[`${provider}Arguments`] ?? [];
   if (!Array.isArray(extra) || extra.some(value => typeof value !== 'string' || /[\0\r\n]/.test(value))) {
-    throw new Error(`${session.provider}Arguments must be an array of single-line strings`);
+    throw new Error(`${provider}Arguments must be an array of single-line strings`);
   }
+  return extra;
+}
+
+function newSessionCommand(provider, config = {}) {
+  return [config[`${provider}Command`] || provider, ...startupArguments(provider, config)].map(shellQuote).join(' ');
+}
+
+function resumeArguments(session, config = {}) {
+  if (typeof session.sessionId !== 'string' || !session.sessionId.trim()) throw new Error('Invalid agent session');
+  const extra = startupArguments(session.provider, config);
   if (session.provider === 'codex') return [...extra, 'resume', session.sessionId];
   if (session.provider === 'claude') return [...extra, '--resume', session.sessionId];
   if (session.provider === 'agy') return [...extra, '--conversation', session.sessionId];
@@ -64,6 +72,16 @@ function isInWorkspace(cwd, folders) {
     const relative = path.relative(folder, cwd);
     return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
   });
+}
+
+function resolveTargetFolder(target) {
+  if (typeof target === 'string') return target;
+  return target?.cwd || target?.fsPath || target?.uri?.fsPath;
+}
+
+async function dispatchFolderAdd(target, executeCommand) {
+  const folder = resolveTargetFolder(target);
+  if (folder) return executeCommand('agentSessionRestore.add', folder);
 }
 
 async function jsonlFiles(root, depth = 5) {
@@ -194,4 +212,4 @@ async function discoverSessions(provider, config = {}, warn = () => {}) {
   throw new Error('Unsupported agent provider');
 }
 
-module.exports = { expandHome, sessionKey, shellQuote, resumeArguments, resumeCommand, launchOptions, cleanTitle, isInWorkspace, discoverSessions };
+module.exports = { startupArguments, newSessionCommand, expandHome, sessionKey, shellQuote, resumeArguments, resumeCommand, launchOptions, cleanTitle, isInWorkspace, resolveTargetFolder, dispatchFolderAdd, discoverSessions };

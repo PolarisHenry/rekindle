@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- Default the sidebar to enabled sessions in the current workspace; expose paused sessions through Show History.
+- Add folder-specific session creation from Explorer and folder groups, with cwd selection and arbitrary folder browsing.
+- Preserve custom session names across automatic observation and explicitly rename an already tracked conversation when added again.
+- Show task activity from provider lifecycle events and offer optional completion notifications, disabled by default.
+- Replace Codex PNG artwork with bundled SVGs and document the public terminal icon setter limitation.
+
+## 0.7.0
+
+- Add explicit new-conversation creation, keeping similar names independent from existing saved conversations.
+- Add live sidebar search across names, provider labels, full paths, and session IDs, with clear/cancel support.
+- Remove session checkboxes; retain explicit enable/disable actions and stable ordering regardless of restore state.
+- At 0.7.0, keep manually disabled sessions visible; 0.8.0 moves them behind the Show History filter.
+- Start new agent terminals with provider icons and configured arguments, then bind actual IDs from the observer.
+
 ## 0.6.0
 
 - Nest both grouping dimensions: Folder → Agent → Session or Agent → Folder → Session.

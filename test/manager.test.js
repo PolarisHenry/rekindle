@@ -33,6 +33,21 @@ test('concurrent restore does not create duplicate terminals; each ID is distinc
   assert.notEqual(terminals[0].creationOptions.env.AGENT_SESSION_RESTORE_ID, terminals[1].creationOptions.env.AGENT_SESSION_RESTORE_ID);
 });
 
+test('adding an already tracked conversation updates its name and keeps its ID', async () => {
+  const { manager, data } = setup();
+  const first = await manager.add(session('same'), 'Old name');
+  const duplicate = await manager.add(session('same'), 'New name');
+  assert.equal(duplicate.id, first.id);
+  assert.equal(duplicate.name, 'New name');
+  assert.equal(manager.entries.length, 1);
+  assert.equal(data[STORAGE_KEY][0].name, 'New name');
+  const terminal = { name:'Codex · same' };
+  manager.observe(session('same'),terminal,first.id);
+  assert.equal(first.name,'New name','automatic observation preserves an explicit name');
+  const restarted = new SessionManager(manager.vscode,manager.context,()=>{},()=>{});
+  assert.equal(restarted.entries[0].name,'New name','the custom name survives persistence');
+});
+
 test('terminal closure during shutdown does not erase the saved conversation', async () => {
   const { manager, terminals, data, context, vscode } = setup();
   const entry = await manager.add(session('a'), 'A');
@@ -133,4 +148,36 @@ test('restoration reads per-agent arguments from VS Code settings', async () => 
     "'codex' '--yolo' 'resume' 'exact-codex'",
     "'agy' '--dangerously-skip-permissions' '--conversation' 'exact-agy'"
   ]);
+});
+
+test('a newly named conversation starts fresh with configured arguments, then binds its actual ID', async () => {
+  const {manager,vscode,terminals,data}=setup();
+  await manager.add(session('old-id'),'测试？？？');
+  vscode.workspace.getConfiguration=()=>({get:key=>key==='codexArguments'?['--yolo']:undefined});
+  const terminal=await manager.create({provider:'codex',cwd:os.tmpdir()},'测试');
+  assert.equal(terminal.sent,"'codex' '--yolo'");
+  assert.equal(terminal.name,'测试');
+  assert.equal(manager.entries.length,1,'no fake resume ID is persisted before the CLI saves a conversation');
+  const pendingId=terminal.creationOptions.env.AGENT_SESSION_RESTORE_ID;
+  assert.equal(manager.pending.has(pendingId),true);
+  const observed=manager.observe(session('new-exact-id'),terminal,pendingId);
+  await manager.save();
+  assert.equal(observed.entry.id,pendingId);
+  assert.equal(observed.entry.name,'测试');
+  assert.equal(observed.entry.customName,true);
+  assert.equal(JSON.stringify(manager.entries).includes('terminal'),false,'runtime terminal references never enter persisted records');
+  terminal.name='Codex · 自动名称';
+  manager.observe(session('new-exact-id'),terminal,pendingId);
+  assert.equal(observed.entry.name,'测试','pending custom name remains stable after later observation');
+  assert.equal(manager.pending.size,0);
+  assert.deepEqual(data[STORAGE_KEY].map(entry=>entry.sessionId),['old-id','new-exact-id']);
+  assert.equal(terminals.length,1);
+});
+
+test('new-session validation fails before creating terminals or pending entries', async () => {
+  const {manager,vscode,terminals}=setup();
+  vscode.workspace.getConfiguration=()=>({get:key=>key==='codexArguments'?'--yolo':undefined});
+  await assert.rejects(manager.create({provider:'codex',cwd:os.tmpdir()},'New'),/array of single-line strings/);
+  assert.equal(terminals.length,0);
+  assert.equal(manager.pending.size,0);
 });

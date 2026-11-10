@@ -2,7 +2,7 @@
 
 const fs = require('node:fs/promises');
 const { randomUUID } = require('node:crypto');
-const { sessionKey, launchOptions, resumeCommand } = require('./core');
+const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArguments } = require('./core');
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
 const { retireIdleTerminal } = require('./startup');
 const { agentIcon } = require('./agent-icons');
@@ -18,7 +18,9 @@ class SessionManager {
       try { launchOptions(entry); return typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.cwd === 'string'; }
       catch { return false; }
     }).map(entry => ({ ...entry, enabled: entry.enabled !== false }));
+    this.pending = new Map();
     this.live = new Map();
+    this.working = new Set();
     this.opening = new Map();
     this.writes = Promise.resolve();
     this.shellGate = new ShellGate(vscode);
@@ -39,9 +41,14 @@ class SessionManager {
 
   async add(session, name, enabled = true) {
     const existing = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
-    if (existing) return existing;
+    if (existing) {
+      // Adding a conversation that is already tracked is an explicit rename/update,
+      // never a silent no-op. Preserve its restore setting and stable identity.
+      if (name && (existing.name !== name || !existing.customName)) { existing.name = name; existing.customName = true; await this.save(); }
+      return existing;
+    }
     const entry = { id: randomUUID(), provider: session.provider, sessionId: session.sessionId,
-      sessionFile: session.sessionFile, cwd: session.cwd, name, enabled, createdAt: new Date().toISOString() };
+      sessionFile: session.sessionFile, cwd: session.cwd, name, customName: true, enabled, createdAt: new Date().toISOString() };
     this.entries.push(entry);
     await this.save();
     return entry;
@@ -51,6 +58,7 @@ class SessionManager {
     const entry = this.entries.find(item => item.id === id);
     if (!entry) return;
     entry.enabled = enabled;
+    entry.archived = false;
     await this.save();
   }
 
@@ -59,23 +67,56 @@ class SessionManager {
     let dirty = false;
     if (entry && sessionKey(entry) !== sessionKey(session)) {
       entry.enabled = false;
+      entry.archived = true;
       this.live.delete(entry.id);
       entry = undefined;
       dirty = true;
     }
     if (!entry) entry = this.entries.find(row => sessionKey(row) === sessionKey(session));
     if (!entry) {
-      entry = { id: randomUUID(), enabled: true, createdAt: new Date().toISOString() };
+      const pending = this.pending.get(previousId);
+      entry = {
+        id: pending ? previousId : randomUUID(),
+        ...(pending ? { name: pending.name, customName: pending.customName === true } : {}),
+        provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile,
+        cwd: session.cwd, enabled: pending?.enabled ?? true,
+        createdAt: pending?.createdAt || new Date().toISOString()
+      };
       this.entries.push(entry);
       dirty = true;
     }
-    const values = { provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: terminal.name, automatic: true, unresolved: false };
+    this.pending.delete(previousId);
+    const values = { provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: entry.customName ? entry.name : terminal.name, automatic: true, unresolved: false };
     if (Object.keys(values).some(key => entry[key] !== values[key])) { Object.assign(entry, values); dirty = true; }
     this.live.set(entry.id, terminal);
     return { entry, dirty };
   }
 
-  async startInShell(terminal, entry) {
+  async create(session, name) {
+    if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before starting agents.');
+    const entry = { ...session, id: randomUUID(), name, customName: true };
+    const config = this.config();
+    const command = newSessionCommand(entry.provider, config);
+    const stat = await fs.stat(entry.cwd).catch(() => null);
+    if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
+    const options = launchOptions({ ...entry, sessionId: 'pending' }, config);
+    if (process.platform === 'win32') options.shellArgs = startupArguments(entry.provider, config);
+    this.pending.set(entry.id, entry);
+    let terminal;
+    try {
+      terminal = await createAgentTerminal(this.vscode, { ...options, iconPath: agentIcon(this.vscode, entry.provider) }, this.log);
+      entry.terminal = terminal;
+      await this.startInShell(terminal, entry, command);
+      terminal.show(false);
+      return terminal;
+    } catch (error) {
+      this.pending.delete(entry.id);
+      terminal?.dispose();
+      throw error;
+    }
+  }
+
+  async startInShell(terminal, entry, startupCommand) {
     if (process.platform === 'win32') return; // Windows still starts the CLI directly.
     if (!terminal.shellIntegration && this.vscode.window.onDidChangeTerminalShellIntegration) {
       await new Promise(resolve => {
@@ -88,11 +129,11 @@ class SessionManager {
         if (terminal.shellIntegration) done();
       });
     }
-    if (!this.vscode.window.terminals.includes(terminal) || !this.entries.some(item => item.id === entry.id)) return;
+    if (!this.vscode.window.terminals.includes(terminal) || (!this.entries.some(item => item.id === entry.id) && !this.pending.has(entry.id))) return;
     const pythonInstalled = this.vscode.extensions?.getExtension('ms-python.python') || this.vscode.extensions?.getExtension('ms-python.vscode-python-envs');
     await this.shellGate.wait(terminal, { grace: pythonInstalled ? 1000 : 0 });
     if (!this.vscode.window.terminals.includes(terminal)) return;
-    const command = resumeCommand(entry, this.config());
+    const command = startupCommand || resumeCommand(entry, this.config());
     if (terminal.shellIntegration) terminal.shellIntegration.executeCommand(command);
     else terminal.sendText(command, true);
   }
@@ -159,7 +200,8 @@ class SessionManager {
   }
 
   closed(terminal) {
-    for (const [id, live] of this.live) if (live === terminal) this.live.delete(id);
+    for (const [id, entry] of this.pending) if (entry.terminal === terminal) this.pending.delete(id);
+    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); }
     // Window shutdown also emits terminal-close events. Never erase saved mappings here.
     this.changed();
   }

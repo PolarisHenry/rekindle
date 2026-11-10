@@ -29,6 +29,25 @@ exports.run = async function () {
     terminal.shellIntegration.executeCommand([cli,...args].map(shellQuote).join(' '));
     return terminal;
   }
+  if (phase === 'new-session') {
+    for (const entry of [...manager.entries]) await manager.remove(entry.id);
+    for (const terminal of [...vscode.window.terminals]) terminal.dispose();
+    await new Promise(resolve => setTimeout(resolve,300));
+    const old=await manager.add({provider:'codex',sessionId:'saved-old-id',cwd:path.join(data,'workspace')},'测试？？？');
+    const terminal=await manager.create({provider:'codex',cwd:old.cwd},'测试');
+    await until(async()=>{await api.tracker.sample();return manager.entries.length===2;});
+    const created=manager.entries.find(entry=>entry.id!==old.id);
+    assert.equal(created.name,'测试');
+    assert.notEqual(created.sessionId,old.sessionId);
+    assert.ok(created.sessionId);
+    assert.equal(manager.live.get(created.id),terminal);
+    const launches=(await fs.readFile(path.join(data,'launches.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(launches.at(-1).args,[],'new conversation does not run a resume command');
+    await api.tree.setSearch('测试');
+    assert.equal((await api.tree.getChildren()).flatMap(group=>group.sessions).length,2,'search finds both similar titles independently');
+    console.log('PASS independent new conversation with similar Chinese names');
+    return;
+  }
   if (phase === 'environment-restore' || phase === 'disabled-restore') {
     assert.equal(manager.entries.length, 2);
     const first = manager.entries[0];
@@ -56,17 +75,32 @@ exports.run = async function () {
         const text=await fs.readFile(path.join(data,'launches.jsonl'),'utf8');
         return text.trim().split('\n').map(JSON.parse).slice(-2).every(row=>row.pythonEnv==='active');
       });
-      assert.equal(vscode.window.terminals.length,2,'source activation did not create extra terminals: '+vscode.window.terminals.map(terminal=>terminal.name).join(', '));
-      await api.tree.checked({items:[[first,vscode.TreeItemCheckboxState.Unchecked]]});
+      const agents=vscode.window.terminals.filter(terminal=>terminal.name!=='zsh');
+      assert.equal(agents.length,2,'source activation did not create extra agent terminals: '+vscode.window.terminals.map(terminal=>terminal.name).join(', '));
+      await vscode.commands.executeCommand('agentSessionRestore.disable',first);
       assert.equal(first.enabled,false);
       assert.ok(vscode.window.terminals.includes(manager.live.get(first.id)),'disabling auto restore does not stop the running agent');
       const enabledFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
-      assert.equal(enabledFolders.flatMap(folder=>folder.sessions).length,1);
+      assert.equal(enabledFolders.flatMap(folder=>folder.sessions).length,1,'default view hides paused conversations');
+      await vscode.commands.executeCommand('agentSessionRestore.showHistory');
+      const historicalFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
+      const historicalRows=historicalFolders.flatMap(folder=>folder.sessions);
+      assert.ok(historicalRows.length>=2,'Show history reveals the paused conversation');
+      assert.ok(historicalRows.some(entry=>entry.id===first.id));
+      const beforeSearch=historicalFolders.flatMap(folder=>folder.sessions).map(entry=>entry.id);
+      await api.tree.setSearch(first.name);
+      const matches=(await api.tree.getChildren()).flatMap(group=>group.sessions);
+      assert.ok(matches.some(entry=>entry.id===first.id));
+      await vscode.commands.executeCommand('agentSessionRestore.clearSearch');
+      assert.deepEqual((await api.tree.getChildren()).flatMap(group=>group.sessions).map(entry=>entry.id),beforeSearch);
+      assert.equal(api.tree.getTreeItem(first).checkboxState,undefined,'session rows have no checkbox');
       api.tree.history=[];
       api.tree.loadedAt=Date.now();
       await vscode.commands.executeCommand('agentSessionRestore.showHistory');
       const allFolders=(await api.tree.getChildren()).filter(node=>node.kind==='folder');
-      assert.equal(allFolders.flatMap(folder=>folder.sessions).length,2,'Show history reveals the paused conversation');
+      const allRows=allFolders.flatMap(folder=>folder.sessions);
+      assert.ok(allRows.length>=2,'Show history reveals the paused conversation');
+      assert.ok(allRows.some(entry=>entry.id===first.id));
       await vscode.commands.executeCommand('agentSessionRestore.groupByAgent');
       assert.ok((await api.tree.getChildren()).every(node=>node.kind==='agent'));
       assert.ok(api.view.description.startsWith('By Agent'));
@@ -84,8 +118,8 @@ exports.run = async function () {
       await manager.open(first);
       assert.equal(vscode.window.terminals.length,2,'history can be opened once');
       assert.equal(first.enabled,false,'opening history does not silently enable auto restore');
-      await api.tree.checked({items:[[first,vscode.TreeItemCheckboxState.Checked]]});
-      assert.equal(first.enabled,true,'checkbox can re-enable auto restore');
+      await vscode.commands.executeCommand('agentSessionRestore.enable',first);
+      assert.equal(first.enabled,true,'explicit action can re-enable auto restore');
     }
     console.log('PASS activation ordering and sidebar state: '+phase);
     return;
