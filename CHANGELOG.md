@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Clarify personal Claude Code permission-mode argument formatting.
+- Add the direct Marketplace publishing command and local authentication instructions.
+
 ## 0.9.0
 
 - Publish under the confirmed `ArionLee.agent-session-restore` extension identity.
