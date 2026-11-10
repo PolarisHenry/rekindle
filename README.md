@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="media/icon.png" width="96" height="96" alt="Rekindle icon">
-</p>
 <h1 align="center">Rekindle</h1>
 <p align="center"><strong>Your terminal agents, right where you left them.</strong></p>
 
@@ -76,7 +73,7 @@ Deleting a terminal using its trash button disables its automatic restore and ke
 
 ## Settings
 
-Agent groups and restored terminal tabs use bundled provider artwork; session leaves use small provider-colored dots. Codex uses the general OpenAI Blossom mark with light/dark theme variants; the other providers retain their original brand colors. See [asset notes](media/agents/README.md).
+Agent groups and restored terminal tabs use bundled provider artwork; session leaves use small provider-colored dots. Codex uses the general OpenAI Blossom mark with light/dark theme variants; the other providers retain their original brand colors. The extension icon is bundled in the Marketplace package.
 
 Rekindle adds `${progress}` to VS Code's default terminal-tab description template. This exposes busy/idle progress received through OSC 9;4, including for terminals with a custom tab title. An explicit `terminal.integrated.tabs.description` override remains in control; add `${progress}` to that template if you set one yourself. Rekindle does not write user settings.
 
