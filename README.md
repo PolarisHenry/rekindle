@@ -40,7 +40,7 @@ code --install-extension rekindle.vsix
 
 Load the updated extension, then use a normal terminal. Existing pi processes need one `/reload` after initial installation to load the observer. Claude Code and AGY load their hooks in a new CLI session; existing sessions follow their CLI's hook-reload rules. An agent must save a conversation before its history can be restored.
 
-The package identifier and settings namespace remain `local-tools.agent-session-restore` / `agentSessionRestore.*` so upgrades retain existing workspace records. Its visible name, sidebar, commands, logs, and settings text are **Rekindle**, in English.
+The Marketplace extension identifier is `ArionLee.agent-session-restore`; settings and commands remain under `agentSessionRestore.*`. Existing `local-tools.agent-session-restore` workspace records are imported once on first open with the new identity after installing the passive migration bridge.
 
 ## Sidebar and history
 

@@ -6,13 +6,15 @@ const path = require('node:path');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
-  const data = path.join(root, '.test-data');
+  const data = path.resolve(process.env.REKINDLE_TEST_DATA_DIR || path.join(root, '.test-data'));
   if (!process.env.REKINDLE_TEST_PHASES) await fs.rm(data, { recursive: true, force: true });
   for (const dir of ['workspace', 'user/User', 'extensions']) await fs.mkdir(path.join(data, dir), { recursive: true });
   const driver = path.join(data, 'extensions/local-tools.restore-integration-driver-0.0.1');
   await fs.mkdir(driver, { recursive: true });
   await fs.writeFile(path.join(driver, 'package.json'), JSON.stringify({ name: 'restore-integration-driver', publisher: 'local-tools', version: '0.0.1', engines: { vscode: '^1.95.0' }, main: './index.js', activationEvents: ['onStartupFinished'] }));
   await fs.writeFile(path.join(driver, 'index.js'), `const vscode=require('vscode');const fs=require('node:fs/promises');const path=require('node:path');exports.activate=async()=>{let result;try{await require(${JSON.stringify(path.join(__dirname, 'integration-suite.js'))}).run();result={ok:true};}catch(error){result={ok:false,error:error.stack};}await fs.writeFile(path.join(process.env.AGENT_RESTORE_TEST_DATA,process.env.AGENT_RESTORE_TEST_PHASE+'.result.json'),JSON.stringify(result));await vscode.commands.executeCommand('workbench.action.quit');};\n`);
+  const legacyFixture = path.join(data, 'extensions/local-tools.agent-session-restore-0.8.4');
+  const legacyBridge = path.join(data, 'extensions/local-tools.agent-session-restore-0.8.5');
   const cli = path.join(data, "fake agent's cli");
   await fs.writeFile(cli, `#!${process.execPath}\nrequire(${JSON.stringify(path.join(__dirname, 'fixtures/fake-agent.cjs'))});\n`, { mode: 0o755 });
   await fs.writeFile(path.join(data, 'pi-session.jsonl'), JSON.stringify({ type: 'session', id: 'pi-exact-id', cwd: path.join(data, 'workspace') }) + '\n');
@@ -34,6 +36,33 @@ async function main() {
   }));
   const phases = process.env.REKINDLE_TEST_PHASES?.split(',') || ['seed', 'restore', 'auto-seed', 'auto-restore', 'multi-seed', 'multi-restore', 'environment-restore', 'disabled-restore', 'new-session'];
   for (const phase of phases) {
+    if (phase === 'migration-seed') {
+      await fs.rm(legacyBridge, { recursive: true, force: true });
+      await fs.rm(legacyFixture, { recursive: true, force: true });
+      await fs.mkdir(legacyFixture, { recursive: true });
+      await fs.writeFile(path.join(legacyFixture, 'package.json'), JSON.stringify({ name: 'agent-session-restore', publisher: 'local-tools', version: '0.8.4', engines: { vscode: '^1.95.0' }, main: './seed.cjs', activationEvents: ['*'], contributes: {} }));
+      await fs.copyFile(path.join(__dirname, 'fixtures/legacy-storage-extension.cjs'), path.join(legacyFixture, 'seed.cjs'));
+    }
+    if (phase === 'migration-import') {
+      await fs.rm(legacyFixture, { recursive: true, force: true });
+      await fs.mkdir(legacyBridge, { recursive: true });
+      await fs.writeFile(path.join(legacyBridge, 'package.json'), JSON.stringify({ name: 'agent-session-restore', displayName: 'Rekindle Legacy Migration', publisher: 'local-tools', version: '0.8.5', engines: { vscode: '^1.95.0' }, main: './migration-bridge.js', activationEvents: [], contributes: {} }));
+      await fs.copyFile(path.join(root, 'src/migration-bridge.js'), path.join(legacyBridge, 'migration-bridge.js'));
+      await fs.copyFile(path.join(root, 'src/migration.js'), path.join(legacyBridge, 'migration.js'));
+      const registryFile = path.join(data, 'extensions/extensions.json');
+      const registry = JSON.parse(await fs.readFile(registryFile, 'utf8'));
+      const bridgePath = path.resolve(legacyBridge);
+      const installed = registry.find(item => item.identifier.id === 'local-tools.agent-session-restore');
+      if (!installed) throw new Error('Legacy extension registry entry was not created during migration-seed.');
+      installed.version = '0.8.5';
+      installed.relativeLocation = path.basename(legacyBridge);
+      installed.location = { $mid: 1, fsPath: bridgePath, path: bridgePath, scheme: 'file' };
+      await fs.writeFile(registryFile, JSON.stringify(registry));
+      const obsoleteFile = path.join(data, 'extensions/.obsolete');
+      const obsolete = JSON.parse(await fs.readFile(obsoleteFile, 'utf8').catch(() => '{}'));
+      delete obsolete[path.basename(legacyBridge)];
+      await fs.writeFile(obsoleteFile, JSON.stringify(obsolete));
+    }
     if (phase === 'environment-restore') {
       const python = path.join(data, 'extensions/ms-python.vscode-python-envs-1.42.0');
       await fs.mkdir(python, {recursive:true});
@@ -63,6 +92,7 @@ async function main() {
     if (!result.ok) throw new Error(result.error);
     console.log(`PASS ${phase}: exact IDs, terminal names, cwd, deduplication and persistent state.`);
   }
-  console.log('Integration passed: two exact conversation IDs restored after a full VS Code exit/restart.');
+  if (phases.every(phase => phase.startsWith('migration-'))) console.log('Integration passed: legacy workspace state migrated through the passive API and remained idempotent across restarts.');
+  else console.log('Integration passed: two exact conversation IDs restored after a full VS Code exit/restart.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

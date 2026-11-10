@@ -17,11 +17,40 @@ async function until(check, timeout = 20000) {
 exports.run = async function () {
   const phase = process.env.AGENT_RESTORE_TEST_PHASE;
   const data = process.env.AGENT_RESTORE_TEST_DATA;
-  const extension = vscode.extensions.getExtension('local-tools.agent-session-restore');
+  if (phase === 'migration-seed') {
+    const legacy = vscode.extensions.getExtension('local-tools.agent-session-restore');
+    assert.ok(legacy, 'legacy identity is installed for the seed phase');
+    assert.deepEqual(await legacy.activate(), { seeded: true, count: 2 });
+    const replacement = vscode.extensions.getExtension('ArionLee.agent-session-restore');
+    const blocked = await replacement.activate();
+    assert.equal(blocked.blocked, true, 'the new identity blocks before registering duplicate commands');
+    console.log('PASS legacy identity seeded workspaceState through the VS Code extension API');
+    return;
+  }
+  const extension = vscode.extensions.getExtension('ArionLee.agent-session-restore');
   assert.ok(extension, 'extension is registered');
   const api = await extension.activate();
   await api.ready;
   const manager = api.manager;
+  if (['migration-import', 'migration-reopen'].includes(phase)) {
+    assert.equal(api.blocked, undefined, 'new identity was not blocked by the passive bridge');
+    assert.equal(manager.entries.length, 2, `legacy records imported exactly once (migration=${api.migration?.status}, installed=${Boolean(vscode.extensions.getExtension('local-tools.agent-session-restore'))}, extensions=${vscode.extensions.all.map(item => item.id).filter(id => /local-tools|ArionLee/i.test(id)).join(',')})`);
+    assert.equal(manager.entries.find(entry => entry.id === 'legacy-enabled-id').name, 'Legacy custom name');
+    assert.equal(manager.entries.find(entry => entry.id === 'legacy-enabled-id').customName, true);
+    assert.equal(manager.entries.find(entry => entry.id === 'legacy-enabled-id').enabled, true);
+    const paused = manager.entries.find(entry => entry.id === 'legacy-disabled-id');
+    assert.equal(paused.enabled, false);
+    assert.equal(paused.archived, true);
+    assert.equal(paused.sessionFile, path.join(data, 'workspace', 'legacy.pi.jsonl'));
+    assert.equal(api.tree.showHistory, true);
+    assert.equal(api.tree.groupBy, 'agent');
+    assert.equal(api.tree.workspaceOnly, false);
+    assert.equal(api.migration.status, phase === 'migration-import' ? 'imported' : 'already-imported');
+    assert.equal(vscode.window.terminals.filter(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID === 'legacy-disabled-id').length, 0, 'disabled legacy record is not restored');
+    assert.ok(vscode.window.terminals.filter(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID === 'legacy-enabled-id').length <= 1, 'enabled legacy record is restored at most once');
+    console.log(`PASS legacy identity migration: ${phase}`);
+    return;
+  }
   async function launchOrdinaryAgent(name, args) {
     const terminal = vscode.window.createTerminal({name, cwd:path.join(data,'workspace')});
     await until(() => Boolean(terminal.shellIntegration));

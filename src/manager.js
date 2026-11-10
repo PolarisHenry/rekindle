@@ -14,10 +14,7 @@ class SessionManager {
     this.context = context;
     this.log = log;
     this.changed = changed;
-    this.entries = context.workspaceState.get(STORAGE_KEY, []).filter(entry => {
-      try { launchOptions(entry); return typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.cwd === 'string'; }
-      catch { return false; }
-    }).map(entry => ({ ...entry, enabled: entry.enabled !== false }));
+    this.entries = this.readEntries();
     this.pending = new Map();
     this.live = new Map();
     this.working = new Set();
@@ -25,6 +22,13 @@ class SessionManager {
     this.writes = Promise.resolve();
     this.shellGate = new ShellGate(vscode);
     context.subscriptions?.push(this.shellGate);
+  }
+
+  readEntries() {
+    return this.context.workspaceState.get(STORAGE_KEY, []).filter(entry => {
+      try { launchOptions(entry); return typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.cwd === 'string'; }
+      catch { return false; }
+    }).map(entry => ({ ...entry, enabled: entry.enabled !== false }));
   }
 
   config() {

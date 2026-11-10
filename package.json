@@ -2,8 +2,8 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.8.4",
-  "publisher": "local-tools",
+  "version": "0.9.0",
+  "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
     "vscode": "^1.95.0"
@@ -27,6 +27,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node test/run-integration.js",
+    "package:legacy-bridge": "node scripts/package-legacy-bridge.js",
     "package": "vsce package --allow-star-activation --out rekindle.vsix"
   },
   "devDependencies": {

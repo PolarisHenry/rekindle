@@ -8,8 +8,26 @@ const { pickConversation } = require('./session-picker');
 const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory } = require('./session-add');
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
+const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
 
-function activate(context) {
+async function activate(context) {
+  const legacyExtension = vscode.extensions?.getExtension(OLD_EXTENSION_ID);
+  if (legacyExtension && compareVersions(legacyExtension.packageJSON?.version, BRIDGE_VERSION) < 0) {
+    const reason = `Update ${OLD_EXTENSION_ID} ${legacyExtension.packageJSON?.version || ''} to the passive migration bridge, then reload VS Code.`;
+    void vscode.window.showWarningMessage(`Rekindle has paused to avoid loading two copies of its commands. ${reason}`);
+    return { ready: Promise.resolve(), blocked: true };
+  }
+  let migrationResult = { status: 'not-installed' };
+  if (legacyExtension && vscode.workspace.workspaceFolders?.length) {
+    migrationResult = await importLegacySnapshot({ context, vscode, log: message => console.warn(`[Rekindle] ${message}`) });
+    if (migrationResult.status.startsWith('blocked-') && migrationResult.status !== 'blocked-workspace-mismatch') {
+      void vscode.window.showWarningMessage('Rekindle paused to avoid duplicate session restoration. Install the Rekindle Legacy Migration bridge over the old extension and reload VS Code.');
+      return { ready: Promise.resolve(), blocked: true, migration: migrationResult };
+    }
+    if (migrationResult.status === 'blocked-workspace-mismatch') {
+      void vscode.window.showWarningMessage('Rekindle could not import legacy sessions because the workspace identity did not match. The old bridge remains passive; existing new-identity sessions are unchanged.');
+    }
+  }
   const output = vscode.window.createOutputChannel('Rekindle');
   let sessionTree;
   const refresh = () => {
@@ -17,6 +35,8 @@ function activate(context) {
     void vscode.commands.executeCommand('setContext', 'agentSessionRestore.hasSessions', manager.entries.length > 0);
   };
   const log = message => output.appendLine(`[${new Date().toISOString()}] ${message}`);
+  if (migrationResult.status === 'imported' || migrationResult.status === 'recovered-import') log(`Imported ${context.workspaceState.get('agentSessionRestore.sessions.v1', []).length} legacy session record(s).`);
+  if (migrationResult.status === 'skipped-existing-data') log('Legacy session import skipped because this extension identity already has session data.');
   const manager = new SessionManager(vscode, context, log, refresh);
   const startupShells = new Set(vscode.window.terminals.filter(unusedShell));
   // VS Code may open its default shell after extension activation has begun.
@@ -130,7 +150,7 @@ function activate(context) {
   command('showAllFolders', () => sessionTree.setWorkspaceOnly(false));
   command('workspaceOnly', () => sessionTree.setWorkspaceOnly(true));
   command('refreshHistory', async () => { await sessionTree.loadHistory(true); sessionTree.refresh(); });
-  command('launchSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', '@ext:local-tools.agent-session-restore Arguments'));
+  command('launchSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id} Arguments`));
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
     if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User) {
@@ -146,7 +166,8 @@ function activate(context) {
   const ready = (async () => {
     let failures;
     try {
-      if (!vscode.workspace.isTrusted || !vscode.workspace.workspaceFolders?.length || manager.config().autoRestore === false) return;
+      if (!vscode.workspace.workspaceFolders?.length) return;
+      if (!vscode.workspace.isTrusted || manager.config().autoRestore === false) return;
       await tracker.sample();
       failures = await tracker.restoreAfterPrepare(() => manager.restore());
       await removeStartupShells(vscode, manager, startupShells, log);
@@ -165,7 +186,7 @@ function activate(context) {
       void vscode.window.showWarningMessage(`${failures.length} session(s) could not be restored.`, 'Show Logs').then(choice => { if (choice) output.show(); });
     }
   })();
-  return { ready, manager, tracker, tree: sessionTree, view };
+  return { ready, manager, tracker, tree: sessionTree, view, migration: migrationResult };
 }
 
 module.exports = { activate };

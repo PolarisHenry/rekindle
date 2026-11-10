@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- Publish under the confirmed `ArionLee.agent-session-restore` extension identity.
+- Import saved sessions and sidebar preferences once from the passive `local-tools` migration bridge, scoped to the current workspace.
+- Pause automatic restore when an older legacy extension is present, preventing duplicate restoration during the identity transition.
+
 ## 0.8.4
 
 - Track task activity in managed Codex terminals when a shared daemon makes writer-lock mapping ambiguous, using only the exact saved rollout whose session metadata matches.
