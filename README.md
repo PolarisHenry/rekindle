@@ -121,7 +121,7 @@ Rekindle installs a small local bridge for each event-based provider. Existing h
 - Shared observer script: `~/.local/share/rekindle/session-hook.cjs`
 - Observer records: `~/.local/state/vscode-agent-session-restore/pi/`
 
-Observer records contain process and session IDs, paths, provider, working state, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Codex lifecycle reads only `task_started` / `task_complete` event metadata from the exact rollout file already associated with its terminal. Agent CLIs retain their normal authentication, network, hooks, and permission behavior. Rekindle only passes approval-bypass flags when you explicitly configure them.
+Observer records contain process and session IDs, paths, provider, working state, and update time. They do not contain prompts, tool inputs, transcript contents, or credentials, and are not uploaded by Rekindle. Codex lifecycle extracts only `task_started` / `task_complete` event metadata from the exact rollout already associated with a terminal. A managed terminal can use its saved exact rollout if shared-daemon writer locks are ambiguous, after matching the rollout session ID and cwd; an unbound terminal never falls back to another session. Agent CLIs retain their normal authentication, network, hooks, and permission behavior. Rekindle only passes approval-bypass flags when you explicitly configure them.
 
 On uninstall, remove the pi observer file, the two Claude hook entries whose command references `rekindle/session-hook.cjs`, the AGY `rekindle` definition, and the shared observer script/records if you no longer need them. Leave other hooks intact.
 

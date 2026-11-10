@@ -6,7 +6,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
-const {AutomaticTracker,descendants,parseProcesses,parseOpenFiles,readCodexLifecycle,consumeCompletion,installPiBridge}=require('../src/automatic');
+const {AutomaticTracker,descendants,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
 test('terminal tab description default exposes OSC progress without replacing the VS Code template',()=>{
  const manifest=require('../package.json');
  assert.equal(manifest.contributes.configurationDefaults['terminal.integrated.tabs.description'],'${task}${separator}${local}${separator}${cwdFolder}${separator}${progress}');
@@ -70,6 +70,57 @@ test('Codex startup scan suppresses old completion but reports a just-finished f
   assert.deepEqual(recent.completions.map(event=>event.turnId),['fresh']);
   const old=await readCodexLifecycle(file,undefined,Date.now()+60000);
   assert.deepEqual(old.completions,[]);
+ } finally { await fs.rm(dir,{recursive:true,force:true}); }
+});
+test('Codex startup baseline finds an active task older than a large output tail',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-codex-long-task-'));
+ try {
+  const file=path.join(dir,'rollout.jsonl');
+  await fs.writeFile(file,JSON.stringify({type:'session_meta',payload:{id:'session',cwd:dir}})+'\n');
+  await fs.appendFile(file,JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type:'task_started',turn_attribution:{kind:'user'},turn_id:'long-turn'}})+'\n');
+  await fs.appendFile(file,JSON.stringify({type:'response_item',payload:{type:'tool_output',text:'x'.repeat(400000)}})+'\n');
+  const result=await readCodexLifecycle(file,undefined,Date.now());
+  assert.equal(result.reset,true);
+  assert.equal(result.cursor.working,true,'the most recent task_started remains active even when output grows beyond the old 256KB reset tail');
+  assert.equal(result.cursor.turnId,'long-turn');
+  assert.deepEqual(result.completions,[],'cold-start baseline does not notify for historical work');
+ } finally { await fs.rm(dir,{recursive:true,force:true}); }
+});
+test('shared Codex daemon uses only the bound managed rollout when terminal locks are ambiguous',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-codex-managed-'));
+ try {
+  const sessionId='01a1bf13-8898-7460-8645-1cc36a211432';
+  const entryId='managed-entry';
+  const sessionFile=path.join(dir,`rollout-${sessionId}.jsonl`);
+  await fs.writeFile(sessionFile,[
+   JSON.stringify({type:'session_meta',payload:{id:sessionId,cwd:dir}}),
+   JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type:'task_started',turn_attribution:{kind:'user'},turn_id:'active-turn'}})
+  ].join('\n')+'\n');
+  const terminal={name:'Codex',processId:Promise.resolve(100),exitStatus:undefined,creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entryId}}};
+  const entry={id:entryId,provider:'codex',sessionId,sessionFile,cwd:dir,name:'Codex',enabled:true};
+  const entries=[entry];
+  const manager={entries,live:new Map([[entryId,terminal]]),working:new Set(),observe(session,target){this.observed=session;entry.automatic=true;this.live.set(entry.id,target);return {entry,dirty:false};},changed(){},save:async()=>{}};
+  const terminalStates=[];
+  const vscode={workspace:{isTrusted:true,getConfiguration:()=>({get:()=>false})},window:{terminals:[terminal],showInformationMessage(){}}};
+  let includeCodex=true;
+  const execFile=async command=>{
+   if(command==='ps') return {stdout:includeCodex?'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n102 100 /usr/local/bin/codex\n':'100 1 /bin/zsh\n'};
+   return {stdout:`p101\nn/home/thread-writer-locks/11111111-1111-4111-8111-111111111111.lock\np102\nn/home/thread-writer-locks/22222222-2222-4222-8222-222222222222.lock\n`};
+  };
+  const tracker=new AutomaticTracker(vscode,manager,()=>{},{platform:'darwin',testMode:true,registry:path.join(dir,'empty'),execFile,writeTerminalProgress:async(_terminal,working)=>{terminalStates.push(working);return true;}});
+  await tracker.sample();
+  assert.equal(manager.observed.sessionFile,sessionFile,'ambiguous locks do not replace the stored exact rollout');
+  assert.equal(manager.working.has(entryId),true);
+  assert.deepEqual(terminalStates,[true]);
+  includeCodex=false;
+  await tracker.sample();
+  assert.equal(manager.working.has(entryId),false,'exiting the TUI clears task status even though the saved entry remains');
+  assert.deepEqual(terminalStates,[true,false]);
+
+  const mismatched={...entry,sessionId:'different-session',automatic:true};
+  assert.equal(await readManagedCodexSession(mismatched,entryId,true),undefined,'session_meta id must match the exact saved session');
+  assert.equal(await readManagedCodexSession(entry,undefined,true),undefined,'unbound terminals cannot use a managed session fallback');
+  assert.equal(await readManagedCodexSession(entry,entryId,false),undefined,'an exited Codex process cannot inherit stale busy state');
  } finally { await fs.rm(dir,{recursive:true,force:true}); }
 });
 test('completion notification cursor suppresses startup and duplicate events without crossing sessions',()=>{

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4
+
+- Track task activity in managed Codex terminals when a shared daemon makes writer-lock mapping ambiguous, using only the exact saved rollout whose session metadata matches.
+- Seed current Codex task state from lifecycle metadata across the rollout, including tasks whose start event is older than the output tail.
+
 ## 0.8.3
 
 - Reuse an explicitly selected Folder/Explorer path when creating a new session, without reopening the directory picker.

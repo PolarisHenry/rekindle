@@ -36,45 +36,189 @@ function parseOpenFiles(text) {
   return records;
 }
 
+function skipJsonString(text, index) {
+  for (let i = index + 1; i < text.length; i++) {
+    if (text[i] === '\\') { i++; continue; }
+    if (text[i] === '"') return i + 1;
+  }
+  return undefined;
+}
+
+function skipJsonValue(text, index) {
+  const first = text[index];
+  if (first === '"') return skipJsonString(text, index);
+  if (first !== '{' && first !== '[') {
+    let i = index;
+    while (i < text.length && !',}]'.includes(text[i])) i++;
+    return i;
+  }
+  const stack = [first === '{' ? '}' : ']'];
+  for (let i = index + 1; i < text.length; i++) {
+    if (text[i] === '"') { const end = skipJsonString(text, i); if (!end) return undefined; i = end - 1; continue; }
+    if (text[i] === '{') stack.push('}');
+    else if (text[i] === '[') stack.push(']');
+    else if (text[i] === stack[stack.length - 1]) { stack.pop(); if (!stack.length) return i + 1; }
+  }
+  return undefined;
+}
+
+function readJsonString(text, index) {
+  const end = skipJsonString(text, index);
+  if (!end) return undefined;
+  try { return { value: JSON.parse(text.slice(index, end)), end }; } catch { return undefined; }
+}
+
+function readCodexMetadataObject(text, start, wanted, payloadWanted = []) {
+  if (text[start] !== '{') return undefined;
+  const result = {};
+  let index = start + 1;
+  while (index < text.length) {
+    while (/\s/.test(text[index] || '')) index++;
+    if (text[index] === '}') return { value: result, end: index + 1 };
+    const key = readJsonString(text, index);
+    if (!key) return { value: result, end: undefined };
+    index = key.end;
+    while (/\s/.test(text[index] || '')) index++;
+    if (text[index] !== ':') return { value: result, end: undefined };
+    index++;
+    while (/\s/.test(text[index] || '')) index++;
+    const valueStart = index;
+    if (key.value === 'payload' && payloadWanted.length && text[index] === '{') {
+      const nested = readCodexMetadataObject(text, index, new Set(payloadWanted));
+      result.payload = nested?.value;
+      index = nested?.end ?? text.length;
+    } else if (wanted.has(key.value)) {
+      if (text[index] === '"') {
+        const token = readJsonString(text, index);
+        if (!token) return { value: result, end: undefined };
+        result[key.value] = token.value;
+        index = token.end;
+      } else {
+        const end = skipJsonValue(text, index);
+        if (end === undefined) return { value: result, end: undefined };
+        const raw = text.slice(index, end).trim();
+        result[key.value] = raw === 'null' ? undefined : Number.isFinite(Number(raw)) && raw !== '' ? Number(raw) : undefined;
+        index = end;
+      }
+    } else {
+      const end = skipJsonValue(text, valueStart);
+      if (end === undefined) return { value: result, end: undefined };
+      index = end;
+    }
+    while (/\s/.test(text[index] || '')) index++;
+    if (text[index] === ',') { index++; continue; }
+    if (text[index] === '}') return { value: result, end: index + 1 };
+    return { value: result, end: undefined };
+  }
+  return { value: result, end: undefined };
+}
+
 async function readCodexLifecycle(file, cursor, startedAt = 0) {
   const stat = await fs.stat(file);
   const reset = !cursor || cursor.file !== file || stat.ino !== cursor.ino || stat.size < cursor.offset;
-  const start = reset ? Math.max(0, stat.size - 262144) : cursor.offset;
+  if (reset) {
+    const baseline = await readCodexBaseline(file, stat.size, startedAt);
+    return { cursor: { file, ino: stat.ino, offset: baseline.offset, working: baseline.working, turnId: baseline.turnId }, reset, completions: baseline.completions };
+  }
+  const start = cursor.offset;
   const length = Math.min(stat.size - start, 262144);
   const handle = await fs.open(file, 'r');
   try {
     const buffer = Buffer.alloc(length);
     const { bytesRead } = await handle.read(buffer, 0, length, start);
     let completeLength = buffer.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
-    if (!completeLength && bytesRead === length && length === 262144) completeLength = bytesRead;
-    let working = reset ? false : cursor.working;
-    let turnId = reset ? undefined : cursor.turnId;
+    if (!completeLength && bytesRead === 262144) completeLength = bytesRead;
+    let working = cursor.working;
+    let turnId = cursor.turnId;
     const completions = [];
-    const partial = completeLength === bytesRead && buffer.subarray(0, bytesRead).lastIndexOf(0x0a) < 0;
-    for (const line of buffer.subarray(0, completeLength).toString().split('\n')) {
-      try {
-        let row, event;
-        try { row = JSON.parse(line); event = row.payload; }
-        catch {
-          if (!partial) continue;
-          const prefix = line.match(/^\s*\{[^{}]*"type"\s*:\s*"event_msg"[^{}]*"payload"\s*:\s*\{\s*"type"\s*:\s*"(task_started|task_complete|turn_aborted)"([^{}]*)/);
-          if (!prefix) continue;
-          const turn = prefix[2].match(/"turn_id"\s*:\s*"([^"]+)"/);
-          const timestamp = line.match(/^\s*\{\s*"timestamp"\s*:\s*"([^"]+)"/);
-          event = { type: prefix[1], turn_id: turn?.[1], _timestamp: timestamp?.[1] };
-        }
-        if (row && row.type !== 'event_msg') continue;
+    forEachLinePrefix(buffer, completeLength, line => {
+      const event = codexEventMetadata(line);
+      if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; }
+      else if (event?.type === 'task_complete' && event.turn_id && (!turnId || event.turn_id === turnId)) {
+        working = false;
+        const completedAt = typeof event.completed_at === 'number' ? event.completed_at * 1000 : Date.parse(event.timestamp || '') || Date.now();
+        completions.push({ turnId:event.turn_id, completedAt });
+        turnId = undefined;
+      } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; turnId = undefined; }
+    });
+    return { cursor: { file, ino: stat.ino, offset: start + completeLength, working, turnId }, reset, completions };
+  } finally { await handle.close(); }
+}
+
+function codexEventMetadata(prefix) {
+  const row = readCodexMetadataObject(prefix, prefix.search(/\S/), new Set(['timestamp','type']), ['type','turn_id','completed_at'])?.value;
+  return row?.type === 'event_msg' ? { ...row.payload, timestamp: row.timestamp } : undefined;
+}
+
+function forEachLinePrefix(buffer, length, callback) {
+  const maxPrefix = 2048;
+  let start = 0;
+  while (start < length) {
+    const newline = buffer.indexOf(0x0a, start);
+    const end = newline < 0 || newline >= length ? length : newline;
+    const prefixEnd = Math.min(end, start + maxPrefix);
+    callback(buffer.subarray(start, prefixEnd).toString('utf8'));
+    if (newline < 0 || newline >= length) break;
+    start = newline + 1;
+  }
+}
+
+async function readCodexBaseline(file, size, startedAt) {
+  const handle = await fs.open(file, 'r');
+  try {
+    const buffer = Buffer.alloc(65536);
+    const prefix = Buffer.alloc(2048);
+    let position = 0, lineOffset = 0, prefixLength = 0;
+    let working = false, turnId;
+    const completions = [];
+    while (position < size) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, size - position), position);
+      if (!bytesRead) break;
+      let index = 0;
+      while (index < bytesRead) {
+        const newline = buffer.indexOf(0x0a, index);
+        const end = newline < 0 || newline >= bytesRead ? bytesRead : newline;
+        const take = Math.min(end - index, prefix.length - prefixLength);
+        if (take > 0) { buffer.copy(prefix, prefixLength, index, index + take); prefixLength += take; }
+        if (newline < 0 || newline >= bytesRead) break;
+        const event = codexEventMetadata(prefix.subarray(0, prefixLength).toString('utf8'));
         if (event?.type === 'task_started' && event.turn_id) { working = true; turnId = event.turn_id; }
         else if (event?.type === 'task_complete' && event.turn_id && (!turnId || event.turn_id === turnId)) {
           working = false;
-          const completedAt = typeof event.completed_at === 'number' ? event.completed_at * 1000 : Date.parse(row?.timestamp || event._timestamp || '') || (reset ? undefined : Date.now());
-          if (!reset || (completedAt && completedAt >= startedAt)) completions.push({ turnId:event.turn_id, completedAt });
+          const completedAt = typeof event.completed_at === 'number' ? event.completed_at * 1000 : Date.parse(event.timestamp || '');
+          if (Number.isFinite(completedAt) && completedAt >= startedAt) completions.push({ turnId:event.turn_id, completedAt });
           turnId = undefined;
         } else if (event?.type === 'turn_aborted' && (!event.turn_id || !turnId || event.turn_id === turnId)) { working = false; turnId = undefined; }
-      } catch {}
+        lineOffset = position + newline + 1;
+        prefixLength = 0;
+        index = newline + 1;
+      }
+      position += bytesRead;
     }
-    return { cursor: { file, ino: stat.ino, offset: start + completeLength, working, turnId }, reset, completions };
+    return { working, turnId, offset: lineOffset, completions };
   } finally { await handle.close(); }
+}
+
+async function readManagedCodexSession(entry, managedId, codexPresent) {
+  if (!codexPresent || !entry || managedId !== entry.id || entry.provider !== 'codex' || !entry.sessionId || !path.isAbsolute(entry.sessionFile || '')) return undefined;
+  let handle;
+  try {
+    const stat = await fs.stat(entry.sessionFile);
+    if (!stat.isFile()) return undefined;
+    handle = await fs.open(entry.sessionFile, 'r');
+    const buffer = Buffer.alloc(65536);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+    if (newline < 0) return undefined;
+    const header = JSON.parse(buffer.subarray(0, newline).toString('utf8'));
+    const meta = header?.type === 'session_meta' ? header.payload : undefined;
+    if (meta?.id !== entry.sessionId || !path.isAbsolute(meta.cwd || '') || (entry.cwd && path.resolve(meta.cwd) !== path.resolve(entry.cwd))) return undefined;
+    return { provider: 'codex', sessionId: entry.sessionId, sessionFile: entry.sessionFile, cwd: meta.cwd };
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 function consumeCompletion(key, completedAt, seen, startedAt = Infinity) {
@@ -102,6 +246,9 @@ class AutomaticTracker {
     this.installPi = options.installPiBridge || installPiBridge;
     this.installAgents = options.installAgentBridges || installAgentBridges;
     this.writeProgress = options.writeTerminalProgress || writeTerminalProgress;
+    this.execFile = options.execFile || execFile;
+    this.registry = options.registry || registry;
+    this.readLifecycle = options.readCodexLifecycle || readCodexLifecycle;
     this.preparePromise = undefined;
     this.busy = false;
     this.startedAt = Date.now();
@@ -119,14 +266,14 @@ class AutomaticTracker {
     try {
       const terminals = [...this.vscode.window.terminals];
       const shells = await Promise.all(terminals.map(async terminal => ({ terminal, pid: await terminal.processId })));
-      const { stdout } = await execFile('ps', ['-axo', 'pid=,ppid=,comm='], { timeout: 5000 });
+      const { stdout } = await this.execFile('ps', ['-axo', 'pid=,ppid=,comm='], { timeout: 5000 });
       const processes = parseProcesses(stdout);
       const alive = new Set(processes.map(p => p.pid));
       const reports = new Map();
-      for (const name of await fs.readdir(registry).catch(() => [])) {
+      for (const name of await fs.readdir(this.registry).catch(() => [])) {
         if (!/^\d+\.json$/.test(name)) continue;
         try {
-          const report = JSON.parse(await fs.readFile(path.join(registry, name), 'utf8'));
+          const report = JSON.parse(await fs.readFile(path.join(this.registry, name), 'utf8'));
           if (alive.has(report.pid) && ['pi', 'claude', 'agy'].includes(report.provider) && path.isAbsolute(report.cwd || '')) reports.set(report.pid, report);
         } catch {}
       }
@@ -134,7 +281,7 @@ class AutomaticTracker {
       let files = [];
       if (agentPids.length) {
         try {
-          const output = await execFile('/usr/sbin/lsof', ['-nP', '-p', agentPids.join(','), '-Fn'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+          const output = await this.execFile('/usr/sbin/lsof', ['-nP', '-p', agentPids.join(','), '-Fn'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
           files = parseOpenFiles(output.stdout);
         } catch (error) { if (error.stdout) files = parseOpenFiles(error.stdout); }
       }
@@ -144,6 +291,10 @@ class AutomaticTracker {
       for (const { terminal, pid } of shells) {
         if (!pid || !this.vscode.window.terminals.includes(terminal)) continue;
         const children = descendants(pid, processes);
+        const managedId = terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID;
+        const id = this.terminalIds.get(terminal) || managedId || [...this.manager.live].find(([, live]) => live === terminal)?.[0];
+        let entry = id && this.manager.entries.find(row => row.id === id);
+        const codexPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)codex$/.test(p.command));
         const pi = [...reports.values()].filter(report => children.has(report.pid));
         const locks = files.filter(item => children.has(item.pid) && /thread-writer-locks\/[0-9a-f-]+\.lock$/.test(item.file));
         const ids = [...new Set(locks.map(item => path.basename(item.file, '.lock')))];
@@ -162,14 +313,18 @@ class AutomaticTracker {
             } finally { await handle.close(); }
           }
         }
-        const managedId = terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID;
-        let id = this.terminalIds.get(terminal) || managedId || [...this.manager.live].find(([, live]) => live === terminal)?.[0];
-        let entry = id && this.manager.entries.find(row => row.id === id);
+        const boundToEntry = Boolean(entry && (managedId === entry.id || this.terminalIds.get(terminal) === entry.id || this.manager.live.get(entry.id) === terminal));
+        if (!session && entry?.provider === 'codex' && boundToEntry && codexPresent) {
+          session = await readManagedCodexSession(entry, entry.id, codexPresent);
+        }
+        if (!session && entry?.provider === 'codex' && boundToEntry && !codexPresent) {
+          await this.updateTerminalProgress(terminal, false, pid);
+        }
         if (session) {
           if (session.provider === 'codex' && session.sessionFile) {
             const lifecycleKey = `codex:${session.sessionId}`;
             activeCodexKeys.add(lifecycleKey);
-            const lifecycle = await readCodexLifecycle(session.sessionFile, this.codexLifecycle.get(lifecycleKey), this.startedAt);
+            const lifecycle = await this.readLifecycle(session.sessionFile, this.codexLifecycle.get(lifecycleKey), this.startedAt);
             this.codexLifecycle.set(lifecycleKey, lifecycle.cursor);
             session.working = lifecycle.cursor.working;
             session.lifecycleReset = lifecycle.reset;
@@ -282,4 +437,4 @@ class AutomaticTracker {
     this.terminalProgress.clear();
   }
 }
-module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, consumeCompletion, installPiBridge };
+module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge };
