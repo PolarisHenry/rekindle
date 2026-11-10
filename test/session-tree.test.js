@@ -200,6 +200,20 @@ test('tracking an old native conversation does not promote it using its new reco
   assert.equal(groupedSessions([old],[],true,{now,historyRangeDays:7})[0].sessions[0].id,'native-old');
 });
 
+test('opening a session never changes recent-activity order', () => {
+  const recent={...row('recent','/work'),lastActivityAt:2000};
+  const old={...row('old','/work'),lastActivityAt:1000,lastOpenedAt:9000};
+  assert.deepEqual(groupedSessions([old,recent],[],false)[0].sessions.map(entry=>entry.id),['recent','old']);
+});
+
+test('switching terminal cwd does not change folder priority', () => {
+  const tree={vscode:{window:{activeTerminal:{shellIntegration:{cwd:{scheme:'file',fsPath:'/work/b'}}}},workspace:{workspaceFolders:[{uri:{scheme:'file',fsPath:'/work'}}]}},manager:{hiddenHistory:new Set()}};
+  const first=SessionTree.prototype.displayOptions.call(tree).currentFolder;
+  tree.vscode.window.activeTerminal.shellIntegration.cwd.fsPath='/work/a';
+  assert.equal(SessionTree.prototype.displayOptions.call(tree).currentFolder,first);
+  assert.equal(first,'/work');
+});
+
 test('context menus cover favorite suffixes and use supported when-clause operators', () => {
   const manifest=require('../package.json');
   const menus=manifest.contributes.menus['view/item/context'];

@@ -260,9 +260,8 @@ class SessionManager {
         }
       }
       this.live.set(entry.id, known);
-      this.status.set(entry.id, { state: retrying ? 'unknown' : 'open', ...(retrying ? { reason: 'Waiting for the agent session binding to be identified.' } : {}), updatedAt: Date.now() });
-      if (updateActivity) await this.markOpened(entry.id, Date.now());
-      if (reveal) known.show(true);
+      if (retrying || !this.status.has(entry.id)) this.status.set(entry.id, { state: 'unknown', reason: 'Waiting for the agent session binding to be identified.', updatedAt: Date.now() });
+      if (reveal) known.show(false);
       return known;
     }
     if (this.opening.has(entry.id)) return this.opening.get(entry.id);
@@ -297,7 +296,7 @@ class SessionManager {
         await this.startInShell(terminal, entry);
         if (updateActivity) await this.markOpened(entry.id, Date.now());
         if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);
-        if (reveal) terminal.show(true);
+        if (reveal) terminal.show(false);
         this.log(`Started ${entry.provider} session ${entry.sessionId}`);
         this.changed();
         return terminal;

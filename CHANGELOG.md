@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.2
+
+- Focus the selected terminal when opening a session instead of leaving focus in the sidebar/editor.
+- Keep session and folder ordering stable when opening or switching terminals; only real task activity changes recent-activity ordering.
+- Preserve the current Working/Unknown state when revealing an existing terminal and avoid a full tree refresh for that action.
+
 ## 0.10.1
 
 - Keep nested agent processes from replacing the outer terminal agent's saved conversation.

@@ -311,3 +311,17 @@ test('explicitly opening an old tracked native row makes it visible without chan
   assert.equal(old.lastActivityAt,oldActivity,'opening is stored separately from provider task activity');
   assert.ok(old.lastOpenedAt>Date.now()-10000);
 });
+
+test('switching to an open session focuses its terminal without saving or resetting Working', async () => {
+  const {manager}=setup();
+  const entry=await manager.add(session('stable-open'),'Stable');
+  const terminal=await manager.open(entry);
+  const timestamp=entry.lastOpenedAt;
+  manager.status.set(entry.id,{state:'working'});
+  let saves=0; manager.save=async()=>{saves++;};
+  await manager.open(entry);
+  assert.equal(terminal.shownWith,false,'focus stays in the terminal rather than returning to the sidebar/editor');
+  assert.equal(entry.lastOpenedAt,timestamp);
+  assert.equal(saves,0,'switching existing terminals does not refresh the entire tree');
+  assert.equal(manager.status.get(entry.id).state,'working');
+});

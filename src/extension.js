@@ -62,7 +62,7 @@ async function activate(context) {
     treeDataProvider: sessionTree
   });
   sessionTree.attachView(view);
-  context.subscriptions.push(vscode.window.onDidChangeActiveTerminal(() => sessionTree.refresh()), vscode.window.onDidChangeActiveTextEditor(() => sessionTree.refresh()));
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => sessionTree.refresh()));
   context.subscriptions.push(output, sessionTree, view);
 
   const command = (name, callback) => context.subscriptions.push(vscode.commands.registerCommand(`agentSessionRestore.${name}`, async (...args) => {

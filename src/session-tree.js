@@ -5,7 +5,7 @@ const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
 
 function activityTime(entry) {
-  const activity = Math.max(0, ...[entry.lastActivityAt, entry.lastOpenedAt, entry.updatedAt].map(normalizeTimestamp));
+  const activity = Math.max(0, ...[entry.lastActivityAt, entry.updatedAt].map(normalizeTimestamp));
   if (activity) return activity;
   return entry.activityUnknown ? 0 : normalizeTimestamp(entry.createdAt);
 }
@@ -24,7 +24,8 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
   const withinHistoryRange = entry => {
     const excludedByHistory = entry.historyOnly || entry.archived || entry.enabled === false;
     if (!showHistory || !excludedByHistory || historyRangeDays === 'all') return true;
-    const time = activityTime(entry);
+    // Explicit opening can reveal an old history row without changing its sort rank.
+    const time = Math.max(activityTime(entry), normalizeTimestamp(entry.lastOpenedAt));
     return time > 0 && time >= now - historyRangeDays * 86400000;
   };
   const priority = entry => {
@@ -202,16 +203,19 @@ class SessionTree {
   }
 
   displayOptions() {
-    const cwd = this.vscode.window.activeTerminal?.shellIntegration?.cwd;
     const editor = this.vscode.window.activeTextEditor?.document?.uri;
-    const currentFolder = cwd?.scheme === 'file' ? cwd.fsPath : editor?.scheme === 'file' ? path.dirname(editor.fsPath) : undefined;
+    const folders = this.vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file') || [];
+    // Switching a terminal must not promote its folder and move the clicked row.
+    const editorFolder = editor?.scheme === 'file' ? this.vscode.workspace.getWorkspaceFolder?.(editor)?.uri.fsPath : undefined;
+    if (editorFolder) this.currentFolder = editorFolder;
+    const currentFolder = this.currentFolder || folders[0]?.uri.fsPath;
     return {
       search: this.search,
       groupBy: this.groupBy,
       workspaceOnly: this.workspaceOnly,
       hiddenHistory: this.manager.hiddenHistory,
       historyRangeDays: this.historyRangeDays,
-      workspaceFolders: this.vscode.workspace.workspaceFolders?.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath) || [],
+      workspaceFolders: folders.map(folder => folder.uri.fsPath),
       currentFolder
     };
   }
