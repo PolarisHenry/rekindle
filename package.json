@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -374,7 +374,10 @@
             "type": "string",
             "pattern": "^[^\\u0000\\r\\n]*$"
           },
-          "default": [],
+          "default": [
+            "--permission-mode",
+            "bypassPermissions"
+          ],
           "scope": "machine",
           "markdownDescription": "Extra Claude Code startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
         },

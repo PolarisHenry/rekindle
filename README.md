@@ -88,7 +88,7 @@ The settings retain the `agentSessionRestore` prefix for upgrade compatibility:
 | `agyCommand` | `agy` | Executable name or absolute path |
 | `codexArguments` | `[]` | Extra Codex startup arguments |
 | `piArguments` | `[]` | Extra pi startup arguments |
-| `claudeArguments` | `[]` | Extra Claude Code startup arguments |
+| `claudeArguments` | `["--permission-mode", "bypassPermissions"]` | Claude Code startup arguments; set to `[]` to remove the permission mode |
 | `agyArguments` | `[]` | Extra AGY startup arguments |
 | `codexHome` | empty | Override the Codex data directory |
 | `piHome` | empty | Override the pi data directory |
@@ -107,7 +107,7 @@ For example, to restore Codex and Claude Code with your preferred permission fla
 }
 ```
 
-This launches `codex --yolo resume <saved-id>`, `claude --permission-mode bypassPermissions --resume <saved-id>`, and `agy --dangerously-skip-permissions --conversation <saved-id>`. These are personal opt-in examples; argument defaults remain empty. Settings apply to the next restored/opened terminal and do not restart running agents.
+This launches `codex --yolo resume <saved-id>`, `claude --permission-mode bypassPermissions --resume <saved-id>`, and `agy --dangerously-skip-permissions --conversation <saved-id>`. Claude uses this permission mode by default; set `agentSessionRestore.claudeArguments` to `[]` if you want to remove it. Codex, pi, and AGY argument defaults remain empty. Settings apply to the next restored/opened terminal and do not restart running agents.
 
 ## Local observers
 

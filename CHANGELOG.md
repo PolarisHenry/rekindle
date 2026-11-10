@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.2
+
+- Default Claude Code launches and restores to `--permission-mode bypassPermissions`; users can override with an empty argument array.
+
 ## 0.9.1
 
 - Clarify personal Claude Code permission-mode argument formatting.

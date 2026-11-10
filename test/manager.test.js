@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
 const { SessionManager, STORAGE_KEY } = require('../src/manager');
+const extensionManifest = require('../package.json');
 
 function setup(initial = []) {
   const data = { [STORAGE_KEY]: initial };
@@ -148,6 +149,32 @@ test('restoration reads per-agent arguments from VS Code settings', async () => 
     "'codex' '--yolo' 'resume' 'exact-codex'",
     "'agy' '--dangerously-skip-permissions' '--conversation' 'exact-agy'"
   ]);
+});
+
+test('Marketplace Claude defaults reach new and restored sessions; explicit empty override removes them', async () => {
+  const marketDefault = extensionManifest.contributes.configuration.properties['agentSessionRestore.claudeArguments'].default;
+  assert.deepEqual(marketDefault, ['--permission-mode', 'bypassPermissions']);
+  const makeConfig = overrides => ({ get: key => Object.hasOwn(overrides, key)
+    ? overrides[key]
+    : extensionManifest.contributes.configuration.properties[`agentSessionRestore.${key}`]?.default });
+
+  const standard = setup();
+  let overrides = {};
+  standard.vscode.workspace.getConfiguration = () => makeConfig(overrides);
+  await standard.manager.add({ provider: 'claude', sessionId: 'claude-default-id', cwd: os.tmpdir() }, 'Claude default');
+  await standard.manager.restore();
+  assert.equal(standard.terminals[0].sent, "'claude' '--permission-mode' 'bypassPermissions' '--resume' 'claude-default-id'");
+  const created = await standard.manager.create({ provider: 'claude', cwd: os.tmpdir() }, 'Claude new');
+  assert.equal(created.sent, "'claude' '--permission-mode' 'bypassPermissions'");
+
+  const cleared = setup();
+  overrides = { claudeArguments: [] };
+  cleared.vscode.workspace.getConfiguration = () => makeConfig(overrides);
+  await cleared.manager.add({ provider: 'claude', sessionId: 'claude-cleared-id', cwd: os.tmpdir() }, 'Claude cleared');
+  await cleared.manager.restore();
+  assert.equal(cleared.terminals[0].sent, "'claude' '--resume' 'claude-cleared-id'");
+  const withoutPermissionMode = await cleared.manager.create({ provider: 'claude', cwd: os.tmpdir() }, 'Claude cleared new');
+  assert.equal(withoutPermissionMode.sent, "'claude'");
 });
 
 test('a newly named conversation starts fresh with configured arguments, then binds its actual ID', async () => {
