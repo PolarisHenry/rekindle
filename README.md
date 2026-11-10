@@ -133,6 +133,8 @@ On uninstall, remove the pi observer file, the two Claude hook entries whose com
 ## Current limits
 
 - Multiple Codex TUIs sharing a background daemon can be ambiguous. Rekindle skips a mapping it cannot identify instead of guessing. Independent `codex --no-daemon` processes avoid that ambiguity; Rekindle does not rewrite your launch command.
+- pi allocates a session path before it persists the conversation. Rekindle tracks it only after a matching session header exists on disk. If a saved file moves, restore searches the configured pi session directory for its exact ID and working folder; missing or ambiguous matches are left failed rather than replaced with another conversation.
+- A resumed AGY session may not emit a lifecycle hook until its next request. While waiting, Rekindle preserves its saved binding and reports unknown task activity; the first real lifecycle report updates Working/Open normally.
 - Agent hooks/extensions must be enabled. Ephemeral sessions cannot be restored.
 - Unsent input, in-flight tasks, scrollback, split layouts, and transient CLI-side argument changes are not restored. Rekindle's saved per-session arguments are restored.
 - Terminals sharing the same title may not retain their original tab order.

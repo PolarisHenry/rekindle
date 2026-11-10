@@ -36,6 +36,34 @@ function parseOpenFiles(text) {
   return records;
 }
 
+// A CLI may invoke another agent as a tool. Only the outermost agent owns the
+// terminal; reports from nested agents must never replace that conversation.
+function terminalAgent(pid, processes) {
+  const children = descendants(pid, processes);
+  const agents = processes.filter(row => row.pid !== pid && children.has(row.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(row.command));
+  const byPid = new Map(processes.map(row => [row.pid, row]));
+  const agentIds = new Set(agents.map(row => row.pid));
+  const roots = agents.filter(row => {
+    const seen = new Set();
+    let parent = row.parent;
+    while (parent && parent !== pid && !seen.has(parent)) {
+      if (agentIds.has(parent)) return false;
+      seen.add(parent);
+      parent = byPid.get(parent)?.parent;
+    }
+    return true;
+  });
+  const providers = new Set(roots.map(root => path.basename(root.command)));
+  if (providers.size !== 1) return { children: new Set(), present: agents.length > 0 };
+  const provider = [...providers][0];
+  const owned = new Set(roots.flatMap(root => [...descendants(root.pid, processes)]));
+  // Exclude foreign-agent subtrees, even if they launch the outer provider again.
+  for (const agent of agents) if (owned.has(agent.pid) && path.basename(agent.command) !== provider) {
+    for (const nested of descendants(agent.pid, processes)) owned.delete(nested);
+  }
+  return { provider, children: owned, present: true };
+}
+
 function normalizeActivity(value) {
   const n = typeof value === 'string' ? Date.parse(value) : Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -246,7 +274,77 @@ function consumeCompletion(key, completedAt, seen, startedAt = Infinity) {
 async function installPiBridge(home = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi/agent'), stateDirectory = registry) {
   const file = path.join(home, 'extensions/vscode-agent-session-restore.ts');
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const code = `// Installed by the local VS Code Agent Session Restore extension.\nimport fs from 'node:fs';\nimport path from 'node:path';\nexport default function(pi: any) {\n  if (process.env.TERM_PROGRAM !== 'vscode') return;\n  const folder = ${JSON.stringify(stateDirectory)};\n  const publish = (working: boolean, completed: boolean, ctx: any) => {\n    try {\n      const sessionFile = ctx.sessionManager.getSessionFile();\n      if (!sessionFile) return;\n      fs.mkdirSync(folder, {recursive:true});\n      const target = path.join(folder, String(process.pid)+'.json');\n      const temp = target+'.tmp';\n      let previous;\n      try { previous = JSON.parse(fs.readFileSync(target,'utf8')); } catch {}\n      const sessionId = ctx.sessionManager.getSessionId();\n      const same = previous?.provider === 'pi' && previous?.sessionId === sessionId;\n      const completedAt = completed && same && previous.working === true ? Date.now() : same ? previous.completedAt : undefined;\n      const activityAt = (working || completed && same && previous.working === true) ? Date.now() : same ? previous.activityAt : undefined;\n      fs.writeFileSync(temp, JSON.stringify({pid:process.pid,provider:'pi',sessionId,sessionFile,cwd:ctx.cwd,working,...(completedAt ? {completedAt} : {}),...(activityAt ? {activityAt} : {}),updatedAt:Date.now()}));\n      fs.renameSync(temp,target);\n    } catch {}\n  };\n  pi.on('session_start', (_event: any, ctx: any) => publish(false, false, ctx));\n  pi.on('agent_start', (_event: any, ctx: any) => publish(true, false, ctx));\n  pi.on('agent_settled', (_event: any, ctx: any) => publish(false, true, ctx));\n}\n`;
+  let code = `// Installed by the local VS Code Agent Session Restore extension.
+import fs from 'node:fs';
+import path from 'node:path';
+export default function(pi: any) {
+  if (process.env.TERM_PROGRAM !== 'vscode') return;
+  const folder = __STATE_DIRECTORY__;
+  let activeSessionId;
+  let working = false;
+  const publish = (isWorking: boolean, completed: boolean, ctx: any) => {
+    const target = path.join(folder, String(process.pid)+'.json');
+    const clearStale = () => {
+      try {
+        const old = JSON.parse(fs.readFileSync(target,'utf8'));
+        if (old?.provider === 'pi') fs.unlinkSync(target);
+      } catch {}
+    };
+    try {
+      const sessionFile = ctx.sessionManager.getSessionFile();
+      const sessionId = ctx.sessionManager.getSessionId();
+      const cwd = ctx.cwd;
+      if (!sessionFile || !sessionId || !path.isAbsolute(cwd || '')) { clearStale(); return; }
+      // Pi assigns a prospective path at session_start, but creates JSONL only after
+      // the first user/assistant message. Verify its metadata header before publishing.
+      const fd = fs.openSync(sessionFile, 'r');
+      let header;
+      try {
+        const buffer = Buffer.alloc(65536);
+        const count = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        const newline = buffer.subarray(0, count).indexOf(10);
+        if (newline < 0) { clearStale(); return; }
+        header = JSON.parse(buffer.subarray(0, newline).toString('utf8'));
+      } finally { fs.closeSync(fd); }
+      if (header?.type !== 'session' || header.id !== sessionId || !path.isAbsolute(header.cwd || '') || path.resolve(header.cwd) !== path.resolve(cwd)) { clearStale(); return; }
+      fs.mkdirSync(folder, {recursive:true});
+      const temp = target+'.tmp';
+      let previous;
+      try { previous = JSON.parse(fs.readFileSync(target,'utf8')); } catch {}
+      const same = previous?.provider === 'pi' && previous?.sessionId === sessionId;
+      const completedAt = completed && same && previous.working === true ? Date.now() : same ? previous.completedAt : undefined;
+      const activityAt = (isWorking || completed && same && previous.working === true) ? Date.now() : same ? previous.activityAt : undefined;
+      fs.writeFileSync(temp, JSON.stringify({pid:process.pid,provider:'pi',sessionId,sessionFile,cwd,working:isWorking,...(completedAt ? {completedAt} : {}),...(activityAt ? {activityAt} : {}),updatedAt:Date.now()}));
+      fs.renameSync(temp,target);
+    } catch { clearStale(); }
+  };
+  pi.on('session_start', (_event: any, ctx: any) => {
+    activeSessionId = ctx.sessionManager.getSessionId();
+    working = false;
+    publish(false, false, ctx);
+  });
+  pi.on('agent_start', (_event: any, ctx: any) => {
+    activeSessionId = ctx.sessionManager.getSessionId();
+    working = true;
+    publish(true, false, ctx);
+  });
+  // message_end handlers run before Pi appends the message. Defer one event-loop turn
+  // so the durable header/message append completes, without retaining prompt contents.
+  pi.on('message_end', (_event: any, ctx: any) => {
+    if (!working) return;
+    const sessionId = ctx.sessionManager.getSessionId();
+    setTimeout(() => {
+      if (working && activeSessionId === sessionId && ctx.sessionManager.getSessionId() === sessionId) publish(true, false, ctx);
+    }, 0);
+  });
+  pi.on('agent_settled', (_event: any, ctx: any) => {
+    working = false;
+    activeSessionId = ctx.sessionManager.getSessionId();
+    publish(false, true, ctx);
+  });
+}
+`;
+  code = code.replace('__STATE_DIRECTORY__', JSON.stringify(stateDirectory));
   const previous = await fs.readFile(file, 'utf8').catch(() => '');
   if (previous !== code) await fs.writeFile(file, code);
 }
@@ -307,12 +405,13 @@ class AutomaticTracker {
       const visibleStates = new Map();
       for (const { terminal, pid } of shells) {
         if (!pid || !this.vscode.window.terminals.includes(terminal)) continue;
-        const children = descendants(pid, processes);
+        const owner = terminalAgent(pid, processes);
+        const children = owner.children;
         const managedId = terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID;
         const id = this.terminalIds.get(terminal) || managedId || [...this.manager.live].find(([, live]) => live === terminal)?.[0];
         let entry = id && this.manager.entries.find(row => row.id === id);
         const codexPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)codex$/.test(p.command));
-        const pi = [...reports.values()].filter(report => children.has(report.pid));
+        const pi = [...reports.values()].filter(report => children.has(report.pid) && report.provider === owner.provider);
         const locks = files.filter(item => children.has(item.pid) && /thread-writer-locks\/[0-9a-f-]+\.lock$/.test(item.file));
         const ids = [...new Set(locks.map(item => path.basename(item.file, '.lock')))];
         let session;
@@ -388,14 +487,17 @@ class AutomaticTracker {
         } else if (entry?.automatic) {
           // Leave mappings intact when an agent is still present but its exact session
           // cannot be read (e.g. a shared Codex daemon). Never guess from recency.
-          const agentPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(p.command));
+          const agentPresent = owner.present;
           await this.updateTerminalProgress(terminal, false, pid);
           const state = agentPresent ? 'unknown' : 'saved';
-          const reason = agentPresent
+          const waitingForLifecycle = agentPresent && boundToEntry && owner.provider === entry.provider && ['agy', 'claude', 'pi'].includes(entry.provider);
+          const reason = waitingForLifecycle
+            ? 'The restored agent process is attached. Waiting for its first lifecycle report; task activity is not known yet. Resumed sessions may report only after the next request.'
+            : agentPresent
             ? 'An agent is still running, but the exact conversation or task lifecycle is not identifiable. Check Logs or reopen the saved session.'
             : 'No agent process is attached to this terminal. The saved conversation can be opened again.';
           this.manager.status?.set(entry.id, { state, reason, updatedAt: Date.now() });
-          if (agentPresent && this.lastVisibleStates?.get(entry.id)?.startsWith('unknown:') !== true) this.log(`Session status unknown for ${entry.provider} session ${entry.name}: ${reason}`);
+          if (agentPresent && this.lastVisibleStates?.get(entry.id) !== `${state}:${reason}`) this.log(`${waitingForLifecycle ? 'Waiting for lifecycle report' : 'Session status unknown'} for ${entry.provider} session ${entry.name}: ${reason}`);
           visibleStates.set(entry.id, `${state}:${reason}`);
           if (ids.length > 1 && !entry.unresolved) { entry.unresolved = true; dirty = true; }
           if (!agentPresent) {
@@ -505,4 +607,4 @@ class AutomaticTracker {
     this.terminalProgress.clear();
   }
 }
-module.exports = { AutomaticTracker, descendants, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };
+module.exports = { AutomaticTracker, descendants, terminalAgent, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };

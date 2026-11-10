@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const os = require('node:os');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { SessionManager, STORAGE_KEY } = require('../src/manager');
 const extensionManifest = require('../package.json');
 
@@ -85,6 +87,44 @@ test('missing cwd is reported and does not silently start a different session', 
   const failures = await manager.restore();
   assert.equal(failures.length, 1);
   assert.equal(terminals.length, 0);
+});
+
+test('pi restore resolves a moved file by exact ID and cwd, updates the saved path, and resumes it', async () => {
+  const { manager, terminals, vscode, data } = setup();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-pi-manager-'));
+  const cwd = path.join(root, 'workspace');
+  const file = path.join(root, 'sessions', 'renamed', 'conversation.jsonl');
+  try {
+    await fs.mkdir(cwd);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify({ type: 'session', id: 'pi-exact', cwd }) + '\n');
+    vscode.workspace.getConfiguration = () => ({ get: key => key === 'piHome' ? root : undefined });
+    const entry = await manager.add({ provider: 'pi', sessionId: 'pi-exact', sessionFile: path.join(root, 'deleted.jsonl'), cwd }, 'Pi task');
+    const terminal = await manager.open(entry);
+    assert.equal(entry.sessionFile, file);
+    assert.equal(data[STORAGE_KEY][0].sessionFile, file, 'the recovered exact path survives workspace state persistence');
+    assert.match(terminal.sent, /--session/);
+    assert.ok(terminal.sent.includes(file));
+    assert.equal(terminals.length, 1);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test('pi restore refuses missing or mismatched session files without starting another conversation', async () => {
+  const { manager, terminals, vscode } = setup();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-pi-missing-'));
+  const cwd = path.join(root, 'workspace');
+  try {
+    await fs.mkdir(cwd);
+    vscode.workspace.getConfiguration = () => ({ get: key => key === 'piHome' ? root : undefined });
+    const entry = await manager.add({ provider: 'pi', sessionId: 'wanted-id', sessionFile: path.join(root, 'gone.jsonl'), cwd }, 'Pi task');
+    await assert.rejects(manager.open(entry), /missing or does not match this session ID and working folder/);
+    assert.equal(terminals.length, 0);
+
+    await fs.mkdir(path.join(root, 'sessions'), { recursive: true });
+    await fs.writeFile(path.join(root, 'sessions', 'wrong.jsonl'), JSON.stringify({ type: 'session', id: 'other-id', cwd }) + '\n');
+    await assert.rejects(manager.open(entry), /missing or does not match this session ID and working folder/);
+    assert.equal(terminals.length, 0);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
 test('restore focuses the first successful agent, never creates a default shell', async () => {

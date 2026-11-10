@@ -6,6 +6,7 @@ const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArgu
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
 const { retireIdleTerminal } = require('./startup');
 const { agentIcon } = require('./agent-icons');
+const { piSessionsRoot, resolvePiSessionFile } = require('./pi-session');
 const STORAGE_KEY = 'agentSessionRestore.sessions.v1';
 
 class SessionManager {
@@ -268,9 +269,18 @@ class SessionManager {
     const opening = (async () => {
       const stat = await fs.stat(entry.cwd).catch(() => null);
       if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
-      if (entry.provider === 'pi' && entry.sessionFile) {
-        const sessionFile = await fs.stat(entry.sessionFile).catch(() => null);
-        if (!sessionFile?.isFile()) throw new Error('The saved pi session file no longer exists.');
+      if (entry.provider === 'pi') {
+        const sessionFile = await resolvePiSessionFile({
+          sessionId: entry.sessionId,
+          cwd: entry.cwd,
+          sessionFile: entry.sessionFile,
+          sessionRoot: piSessionsRoot(this.configFor(entry))
+        });
+        if (!sessionFile) throw new Error('The saved pi session file is missing or does not match this session ID and working folder. Restore was skipped to avoid opening a different conversation.');
+        if (entry.sessionFile !== sessionFile) {
+          entry.sessionFile = sessionFile;
+          await this.save();
+        }
       }
       // Check again after asynchronous filesystem validation to avoid racing an explicit remove.
       if (!this.entries.some(item => item.id === entry.id)) return;

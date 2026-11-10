@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+
+- Keep nested agent processes from replacing the outer terminal agent's saved conversation.
+- Distinguish a restored agent waiting for its first lifecycle report from an unidentified process; preserve unknown task state until a real event arrives.
+- Resolve relocated pi session files by exact identity and avoid tracking pi conversations before their session file is persisted.
+
 ## 0.10.0
 
 - Make completion notifications actionable: each toast can open the exact saved session, and completed Codex turns remain deduplicated across a session restart.

@@ -6,7 +6,57 @@ const os=require('node:os');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
-const {AutomaticTracker,descendants,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
+const {AutomaticTracker,descendants,terminalAgent,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
+
+test('terminal ownership excludes nested agents and ambiguous sibling agents',()=>{
+ const processes=parseProcesses('100 1 zsh\n101 100 pi\n102 101 sh\n103 102 agy\n104 103 pi\n200 1 zsh\n201 200 agy\n202 201 codex');
+ assert.deepEqual([...terminalAgent(100,processes).children],[101,102]);
+ assert.equal(terminalAgent(100,processes).provider,'pi');
+ assert.equal(terminalAgent(200,processes).provider,'agy');
+ assert.deepEqual([...terminalAgent(200,processes).children],[201]);
+ const ambiguous=terminalAgent(100,[...processes,{pid:105,parent:100,command:'claude'}]);
+ assert.equal(ambiguous.present,true);
+ assert.equal(ambiguous.children.size,0);
+});
+
+test('nested AGY hook cannot change a pi terminal provider or session identity',async t=>{
+ const fx=await codexSampleFixture(t);
+ Object.assign(fx.entry,{provider:'pi',sessionId:'pi-original',automatic:true});
+ fx.tracker.execFile=async()=>({stdout:'100 1 zsh\n101 100 pi\n102 101 sh\n103 102 agy\n'});
+ await fs.writeFile(path.join(fx.tracker.registry,'103.json'),JSON.stringify({pid:103,provider:'agy',sessionId:'nested-agy',cwd:fx.dir,working:true}));
+ const observed=[];
+ fx.manager.observe=session=>{observed.push(session);return {entry:fx.entry,dirty:false};};
+ await fx.tracker.sample();
+ assert.deepEqual(observed,[],'nested hook is ignored even before pi publishes its first report');
+ assert.equal(fx.entry.provider,'pi');
+ assert.equal(fx.entry.sessionId,'pi-original');
+ assert.equal(fx.manager.status.get(fx.entry.id).state,'unknown');
+ await fs.writeFile(path.join(fx.tracker.registry,'101.json'),JSON.stringify({pid:101,provider:'pi',sessionId:'pi-original',cwd:fx.dir,working:true}));
+ await fx.tracker.sample();
+ assert.equal(observed.length,1);
+ assert.equal(observed[0].provider,'pi');
+ assert.equal(fx.manager.status.get(fx.entry.id).state,'working');
+});
+
+test('restored AGY waits for lifecycle without a false restore error and recovers on its first report',async t=>{
+ const fx=await codexSampleFixture(t);
+ Object.assign(fx.entry,{provider:'agy',sessionId:'agy-restored',automatic:true});
+ fx.tracker.execFile=async()=>({stdout:'100 1 zsh\n101 100 agy\n'});
+ const logs=[]; fx.tracker.log=message=>logs.push(message);
+ await fx.tracker.sample();
+ assert.match(fx.manager.status.get(fx.entry.id).reason,/Waiting for its first lifecycle report/);
+ assert.equal(fx.entry.enabled,true);
+ assert.equal(fx.manager.live.get(fx.entry.id),fx.terminal);
+ assert.match(logs[0],/^Waiting for lifecycle report/);
+ assert.deepEqual(fx.messages,[]);
+ await fs.writeFile(path.join(fx.tracker.registry,'101.json'),JSON.stringify({pid:101,provider:'agy',sessionId:fx.entry.sessionId,cwd:fx.dir,working:true,activityAt:Date.now()}));
+ await fx.tracker.sample();
+ assert.equal(fx.manager.status.get(fx.entry.id).state,'working');
+ await fs.writeFile(path.join(fx.tracker.registry,'101.json'),JSON.stringify({pid:101,provider:'agy',sessionId:fx.entry.sessionId,cwd:fx.dir,working:false,completedAt:Date.now()}));
+ await fx.tracker.sample();
+ assert.equal(fx.manager.status.get(fx.entry.id).state,'open');
+ assert.equal(fx.messages.length,1);
+});
 
 async function codexSampleFixture(t, notifications = true, initialEvents = []) {
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-completion-sample-'));
@@ -270,7 +320,9 @@ test('Pi bridge uses settled lifecycle and only emits a new token after a matchi
   const handlers={};
   bridge.default({on:(event,handler)=>handlers[event]=handler});
   let sessionId='pi-a';
-  const ctx={cwd:dir,sessionManager:{getSessionFile:()=>path.join(dir,'session.jsonl'),getSessionId:()=>sessionId}};
+  const sessionFile=path.join(dir,'session.jsonl');
+  await fs.writeFile(sessionFile,JSON.stringify({type:'session',id:'pi-a',cwd:dir})+'\n');
+  const ctx={cwd:dir,sessionManager:{getSessionFile:()=>sessionFile,getSessionId:()=>sessionId}};
   const read=async()=>JSON.parse(await fs.readFile(path.join(state,`${process.pid}.json`),'utf8'));
   handlers.session_start({},ctx);
   assert.equal((await read()).working,false);
@@ -283,11 +335,40 @@ test('Pi bridge uses settled lifecycle and only emits a new token after a matchi
   handlers.agent_settled({},ctx);
   assert.equal((await read()).completedAt,completed.completedAt,'duplicate settle preserves the one-time completion token');
   sessionId='pi-b';
+  await fs.writeFile(sessionFile,JSON.stringify({type:'session',id:'pi-b',cwd:dir})+'\n');
   handlers.agent_start({},ctx);
   const secondStart=await read();
   assert.equal(secondStart.completedAt,undefined,'session switch does not carry the previous completion token');
   handlers.agent_settled({},ctx);
   assert.ok((await read()).completedAt);
+ } finally { if(previous===undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM=previous; await fs.rm(dir,{recursive:true,force:true}); }
+});
+test('Pi bridge waits for first persisted header before reporting a new session as working',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-pi-deferred-'));
+ const state=path.join(dir,'state');
+ const previous=process.env.TERM_PROGRAM;
+ try {
+  process.env.TERM_PROGRAM='vscode';
+  await installPiBridge(dir,state);
+  const source=await fs.readFile(path.join(dir,'extensions/vscode-agent-session-restore.ts'),'utf8');
+  const moduleFile=path.join(dir,'bridge.mjs');
+  await fs.writeFile(moduleFile,stripTypeScriptTypes(source));
+  const bridge=await import(pathToFileURL(moduleFile).href);
+  const handlers={};
+  bridge.default({on:(event,handler)=>handlers[event]=handler});
+  const sessionFile=path.join(dir,'prospective-session.jsonl');
+  const ctx={cwd:dir,sessionManager:{getSessionFile:()=>sessionFile,getSessionId:()=>'new-pi-session'}};
+  const report=path.join(state,`${process.pid}.json`);
+  handlers.session_start({},ctx);
+  handlers.agent_start({},ctx);
+  await assert.rejects(fs.stat(report),{code:'ENOENT'},'session_start and agent_start must not persist a path-only session');
+  await fs.writeFile(sessionFile,JSON.stringify({type:'session',id:'new-pi-session',cwd:dir})+'\n');
+  handlers.message_end({message:{role:'user',content:'must not enter registry'}},ctx);
+  await new Promise(resolve=>setTimeout(resolve,15));
+  const saved=JSON.parse(await fs.readFile(report,'utf8'));
+  assert.equal(saved.sessionId,'new-pi-session');
+  assert.equal(saved.working,true,'the deferred durable report retains the active task state');
+  assert.equal(JSON.stringify(saved).includes('must not enter registry'),false,'the hook stores metadata only');
  } finally { if(previous===undefined) delete process.env.TERM_PROGRAM; else process.env.TERM_PROGRAM=previous; await fs.rm(dir,{recursive:true,force:true}); }
 });
 test('startup prepares provider hooks before restore and reuses the prepared bridge',async()=>{
