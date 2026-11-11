@@ -2,7 +2,7 @@
 const path = require('node:path');
 const { sessionKey, discoverSessions, isInWorkspace, normalizeTimestamp } = require('./core');
 const { agentIcon, sessionIcon } = require('./agent-icons');
-const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
+const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity' };
 function rowKey(entry) { return entry.ephemeral ? `live:${entry.id}` : sessionKey(entry); }
 
 function activityTime(entry) {

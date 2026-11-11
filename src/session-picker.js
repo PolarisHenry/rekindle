@@ -5,7 +5,7 @@ function pickConversation(vscode, providerName, sessions) {
   return new Promise(resolve => {
     const picker = vscode.window.createQuickPick();
     picker.title = `Add ${providerName} Session`;
-    picker.placeholder = 'Type a name to create a new conversation, or select a saved conversation';
+    picker.placeholder = 'Type a name for a new conversation, or pick a saved one (reopens in its own folder)';
     picker.matchOnDescription = true;
     picker.matchOnDetail = true;
     let result;

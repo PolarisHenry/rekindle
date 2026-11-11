@@ -7,7 +7,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
-const {completionSummary,AutomaticTracker,descendants,terminalAgent,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
+const {completionSummary,AutomaticTracker,descendants,terminalAgent,parseProcesses,parseOpenFiles,readCodexLifecycle,readCodexThreadHeader,readCodexLockSession,resolveSharedCodexSession,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
 
 test('terminal ownership excludes nested agents and ambiguous sibling agents',()=>{
  const processes=parseProcesses('100 1 zsh\n101 100 pi\n102 101 sh\n103 102 agy\n104 103 pi\n200 1 zsh\n201 200 agy\n202 201 codex');
@@ -155,6 +155,162 @@ test('unbound shared-daemon Codex appears as a stable transient row, binds clean
  assert.equal(manager.liveOnlyEntries.size,0);
  assert.equal(manager.entries[0].sessionId,exactId);
  assert.equal(manager.entries.some(row=>row.id.startsWith('live-only:')),false);
+});
+
+async function sharedDaemonFixture(t, conversations) {
+ // conversations: [{id, cwd, parentThreadId?}] — every thread's lock and rollout
+ // are held only by a detached daemon pid (500), never by the terminal's TUI.
+ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'rekindle-shared-daemon-'));
+ t.after(() => fs.rm(root, { recursive: true, force: true }));
+ const home = path.join(root, 'codex-home');
+ const locksDir = path.join(home, 'thread-writer-locks');
+ const sessionsDir = path.join(home, 'sessions');
+ await fs.mkdir(locksDir, { recursive: true });
+ await fs.mkdir(sessionsDir, { recursive: true });
+ const files = [];
+ for (const conversation of conversations) {
+   const lock = path.join(locksDir, `${conversation.id}.lock`);
+   await fs.writeFile(lock, '');
+   const rollout = path.join(sessionsDir, `rollout-2026-11-11T00-00-00-${conversation.id}.jsonl`);
+   await fs.writeFile(rollout, JSON.stringify({ timestamp: '2026-11-11T00:00:00.000Z', type: 'session_meta', payload: {
+     id: conversation.id,
+     ...(conversation.parentThreadId ? { parent_thread_id: conversation.parentThreadId } : {}),
+     cwd: conversation.cwd,
+     source: conversation.parentThreadId ? { subagent: { thread_spawn: { parent_thread_id: conversation.parentThreadId } } } : 'vscode',
+     filler: 'x'.repeat(96 * 1024) // First line larger than the header read buffer.
+   } }) + '\n');
+   files.push({ pid: 500, file: lock }, { pid: 500, file: rollout });
+ }
+ return { root, home, files };
+}
+
+function daemonManager(terminal) {
+ const manager = {
+   entries: [], live: new Map(), working: new Set(), status: new Map(), changed() {}, save: async () => {},
+   liveOnlyEntries: new Map(), liveOnlyByTerminal: new WeakMap()
+ };
+ manager.observe = session => {
+   let entry = manager.entries.find(row => row.provider === session.provider && row.sessionId === session.sessionId);
+   if (!entry) { entry = { id: `entry-${session.sessionId}`, provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile, cwd: session.cwd, name: 'Codex task', enabled: true }; manager.entries.push(entry); }
+   manager.live.set(entry.id, terminal);
+   return { entry, dirty: true };
+ };
+ manager.upsertLiveOnly = (current, provider, cwd) => {
+   let id = manager.liveOnlyByTerminal.get(current);
+   let entry = id && manager.liveOnlyEntries.get(id);
+   if (!entry) { id = `live-only:${manager.liveOnlyEntries.size + 1}`; entry = { id, provider, cwd, name: current.name || 'Codex task', ephemeral: true, enabled: false }; manager.liveOnlyByTerminal.set(current, id); manager.liveOnlyEntries.set(id, entry); manager.live.set(id, current); }
+   manager.status.set(id, { state: 'unknown', reason: 'No exact shared-daemon session binding' });
+   return entry;
+ };
+ manager.removeLiveOnlyForTerminal = current => {
+   const id = manager.liveOnlyByTerminal.get(current);
+   if (!id) return false;
+   manager.liveOnlyEntries.delete(id); manager.live.delete(id); manager.status.delete(id);
+   return true;
+ };
+ return manager;
+}
+
+test('shared-daemon Codex binds an untracked terminal through daemon-held locks and its working folder',async t=>{
+ const fx=await sharedDaemonFixture(t,[
+  {id:'11111111-1111-4111-8111-111111111111',cwd:'/tmp/project-a'},
+  {id:'22222222-2222-4222-8222-222222222222',cwd:'/tmp/project-a',parentThreadId:'11111111-1111-4111-8111-111111111111'},
+  {id:'33333333-3333-4333-8333-333333333333',cwd:'/tmp/project-b'}
+ ]);
+ const terminal={processId:Promise.resolve(100),creationOptions:{env:{}},name:'codex'};
+ const manager=daemonManager(terminal);
+ const vscode={workspace:{isTrusted:true,getConfiguration:()=>({get:()=>false})},window:{terminals:[terminal]}};
+ const tracker=new AutomaticTracker(vscode,manager,()=>{},{
+  registry:path.join(fx.root,'registry'),
+  execFile:async(command,args=[])=>{
+   if(command==='ps') return {stdout:'500 1 /codex/packages/app-server-daemon/bin/codex\n100 1 /bin/zsh\n101 100 /codex/bin/codex\n'};
+   if(args.includes('-d')) return {stdout:'p101\nfcwd\nn/tmp/project-a\n'};
+   return {stdout:fx.files.map(item=>`p${item.pid}\nn${item.file}\n`).join('')};
+  },
+  writeTerminalProgress:async()=>true
+ });
+ await tracker.sample();
+ assert.equal(manager.entries.length,1,'the terminal binds exactly one conversation');
+ assert.equal(manager.entries[0].sessionId,'11111111-1111-4111-8111-111111111111');
+ assert.equal(manager.entries[0].cwd,'/tmp/project-a');
+ assert.equal(manager.liveOnlyEntries.size,0,'the resolved terminal no longer needs a live-only row');
+ assert.equal(manager.status.get(manager.entries[0].id).state,'open','no task events were observed yet');
+});
+
+test('shared-daemon Codex with two unbound conversations in one folder never guesses',async t=>{
+ const fx=await sharedDaemonFixture(t,[
+  {id:'11111111-1111-4111-8111-111111111111',cwd:'/tmp/project-a'},
+  {id:'33333333-3333-4333-8333-333333333333',cwd:'/tmp/project-a'}
+ ]);
+ const terminal={processId:Promise.resolve(100),creationOptions:{env:{}},name:'codex'};
+ const manager=daemonManager(terminal);
+ const vscode={workspace:{isTrusted:true,getConfiguration:()=>({get:()=>false})},window:{terminals:[terminal]}};
+ const tracker=new AutomaticTracker(vscode,manager,()=>{},{
+  registry:path.join(fx.root,'registry'),
+  execFile:async(command,args=[])=>{
+   if(command==='ps') return {stdout:'500 1 /codex/packages/app-server-daemon/bin/codex\n100 1 /bin/zsh\n101 100 /codex/bin/codex\n'};
+   if(args.includes('-d')) return {stdout:'p101\nfcwd\nn/tmp/project-a\n'};
+   return {stdout:fx.files.map(item=>`p${item.pid}\nn${item.file}\n`).join('')};
+  },
+  writeTerminalProgress:async()=>true
+ });
+ await tracker.sample();
+ assert.equal(manager.entries.length,0,'no conversation is bound when two candidates share the folder');
+ assert.equal(manager.liveOnlyEntries.size,1,'the terminal stays as a transient live row');
+});
+
+test('a sibling terminal that already bound its conversation lets this terminal bind the other one',async t=>{
+ const fx=await sharedDaemonFixture(t,[
+  {id:'11111111-1111-4111-8111-111111111111',cwd:'/tmp/project-a'},
+  {id:'33333333-3333-4333-8333-333333333333',cwd:'/tmp/project-a'}
+ ]);
+ const rolloutA=fx.files.find(item=>item.file.endsWith('-11111111-1111-4111-8111-111111111111.jsonl')).file;
+ const boundTerminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:'entry-bound'}},name:'codex'};
+ const freeTerminal={processId:Promise.resolve(200),creationOptions:{env:{}},name:'codex'};
+ const manager=daemonManager(freeTerminal);
+ const boundEntry={id:'entry-bound',provider:'codex',sessionId:'11111111-1111-4111-8111-111111111111',sessionFile:rolloutA,cwd:'/tmp/project-a',name:'Restored',enabled:true,automatic:true};
+ manager.entries.push(boundEntry);
+ manager.observe=session=>{
+  let entry=manager.entries.find(row=>row.provider===session.provider&&row.sessionId===session.sessionId);
+  if(!entry){entry={id:`entry-${session.sessionId}`,provider:session.provider,sessionId:session.sessionId,sessionFile:session.sessionFile,cwd:session.cwd,name:'Codex task',enabled:true};manager.entries.push(entry);}
+  const target=manager.live.get('entry-bound')===boundTerminal?boundTerminal:freeTerminal;
+  manager.live.set(entry.id,target);
+  return {entry,dirty:true};
+ };
+ const boundSession=manager.entries[0];
+ manager.live.set(boundSession.id,boundTerminal);
+ const vscode={workspace:{isTrusted:true,getConfiguration:()=>({get:()=>false})},window:{terminals:[boundTerminal,freeTerminal]}};
+ const tracker=new AutomaticTracker(vscode,manager,()=>{},{
+  registry:path.join(fx.root,'registry'),
+  execFile:async(command,args=[])=>{
+   if(command==='ps') return {stdout:'500 1 /codex/packages/app-server-daemon/bin/codex\n100 1 /bin/zsh\n101 100 /codex/bin/codex\n200 1 /bin/zsh\n201 200 /codex/bin/codex\n'};
+   if(args.includes('-d')) return {stdout:'p101\nfcwd\nn/tmp/project-a\np201\nfcwd\nn/tmp/project-a\n'};
+   return {stdout:fx.files.map(item=>`p${item.pid}\nn${item.file}\n`).join('')};
+  },
+  writeTerminalProgress:async()=>true
+ });
+ await tracker.sample();
+ assert.equal(manager.entries.length,2);
+ const free=manager.entries.find(row=>row.id!=='entry-bound');
+ assert.equal(free.sessionId,'33333333-3333-4333-8333-333333333333','the unbound terminal takes the conversation the restored terminal did not claim');
+ assert.equal(manager.live.get('entry-bound'),boundTerminal,'the restored terminal keeps its own conversation');
+});
+
+test('shared-daemon resolution reads oversized rollout headers and skips subagent threads',async t=>{
+ const fx=await sharedDaemonFixture(t,[
+  {id:'11111111-1111-4111-8111-111111111111',cwd:'/tmp/project-a'},
+  {id:'22222222-2222-4222-8222-222222222222',cwd:'/tmp/project-a',parentThreadId:'11111111-1111-4111-8111-111111111111'}
+ ]);
+ const meta=await readCodexThreadHeader(fx.files.find(item=>item.file.endsWith('-11111111-1111-4111-8111-111111111111.jsonl')).file);
+ assert.equal(meta.id,'11111111-1111-4111-8111-111111111111');
+ assert.equal(meta.cwd,'/tmp/project-a');
+ assert.equal(meta.parentThreadId,undefined);
+ const subagent=await readCodexLockSession('22222222-2222-4222-8222-222222222222',fx.files);
+ assert.equal(subagent.sessionId,'22222222-2222-4222-8222-222222222222');
+ assert.equal(subagent.parentThreadId,'11111111-1111-4111-8111-111111111111','subagent threads stay identifiable but never own a terminal');
+ const resolved=await resolveSharedCodexSession(fx.files,'/tmp/project-a');
+ assert.equal(resolved.sessionId,'11111111-1111-4111-8111-111111111111','the subagent thread with the same folder is ignored');
+ assert.equal(await resolveSharedCodexSession(fx.files,'/tmp/missing'),undefined,'a folder with no live conversation never binds');
 });
 
 async function appendCodexEvent(file,payload,timestamp=Date.now()) {

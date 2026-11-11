@@ -6,7 +6,7 @@ const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd, resumeCo
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
 const { pickConversation } = require('./session-picker');
-const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory } = require('./session-add');
+const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory, chooseDirectoryWithPicker } = require('./session-add');
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
@@ -99,17 +99,30 @@ async function activate(context) {
       || entry;
   }
 
+  const RECENT_FOLDERS_KEY = 'rekindle.recentFolders.v1';
+  const loadRecentFolders = () => {
+    const value = context.workspaceState.get(RECENT_FOLDERS_KEY, []);
+    return Array.isArray(value) ? value.filter(item => typeof item === 'string' && path.isAbsolute(item)) : [];
+  };
+  const rememberRecentFolder = async (cwd, folders) => {
+    if (!path.isAbsolute(cwd || '') || folders.includes(cwd)) return;
+    const recent = [cwd, ...loadRecentFolders().filter(item => item !== cwd)].slice(0, 5);
+    await context.workspaceState.update(RECENT_FOLDERS_KEY, recent);
+  };
+
   async function chooseDirectory(folders, suggested) {
-    const initial = suggested && typeof suggested === 'string' ? suggested : undefined;
-    const choices = [...new Set([initial, ...folders].filter(Boolean))];
-    const directory = await vscode.window.showQuickPick([
-      ...choices.map(cwd => ({ label: cwd, cwd, description: cwd === initial ? 'Current folder' : undefined })),
-      { label: '$(folder-opened) Browse for any folder…', browse: true }
-    ], { title: 'Conversation working directory' });
-    if (!directory) return;
-    if (!directory.browse) return directory.cwd;
-    const selected = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder' });
-    return selected?.[0]?.fsPath;
+    const terminalCwd = vscode.window.activeTerminal?.shellIntegration?.cwd;
+    const active = terminalCwd?.scheme === 'file' ? terminalCwd.fsPath : undefined;
+    return chooseDirectoryWithPicker(vscode, {
+      folders,
+      suggested,
+      active,
+      recent: loadRecentFolders(),
+      openDialog: async defaultFolder => (await vscode.window.showOpenDialog({
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder',
+        defaultUri: defaultFolder ? vscode.Uri.file(defaultFolder) : undefined
+      }))?.[0]?.fsPath
+    });
   }
 
   command('add', async target => {
@@ -118,8 +131,9 @@ async function activate(context) {
     const provider = await chooseProvider(vscode, addContext);
     if (!provider) return;
     const folders = vscode.workspace.workspaceFolders.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath);
-    const terminalCwd = vscode.window.activeTerminal?.shellIntegration?.cwd;
-    const suggested = addContext.cwd || (terminalCwd?.scheme === 'file' ? terminalCwd.fsPath : undefined);
+    // Only an explicit context (group +, Explorer) may preselect a folder. The active
+    // terminal folder is merely listed, keeping the toolbar action isolated.
+    const suggested = addContext.cwd;
     const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
     sessions.sort((a,b) => Number(isInWorkspace(b.cwd,folders))-Number(isInWorkspace(a.cwd,folders)) || b.updatedAt-a.updatedAt);
     const selected = await pickConversation(vscode, provider.label, sessions);
@@ -133,6 +147,7 @@ async function activate(context) {
       }
       const cwd = await resolveWorkingDirectory({ cwd: addContext.cwd, folders, suggested, chooseDirectory });
       if (!cwd) return;
+      await rememberRecentFolder(cwd, folders);
       session = { provider: provider.value, sessionId: sessionId?.trim(), cwd, title: sessionId?.trim() || 'New Session' };
     }
     const name = selected.create && selected.name ? selected.name : await vscode.window.showInputBox({

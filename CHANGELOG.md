@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.11.7
+
+- Nudge Codex and Antigravity icons up to match Claude at ~80% of the icon box (pi stays at 70% to offset its denser artwork).
+
+## 0.11.6
+
+- Balance every agent icon's visual size, measured from rendered pixels: Codex 75%, Claude 80%, Antigravity 75%, pi 70% of the icon box (previously 59–100% depending on the source artwork's built-in padding).
+
+## 0.11.5
+
+- Normalize the Codex icon size to match the other agents (the official glyph previously filled the whole icon box).
+- Show the agent as **Antigravity** (dropping the CLI suffix) in the sidebar, pickers, and notifications.
+- Offer agents in the Add Session picker shortest name first.
+
+## 0.11.4
+
+- Keep the toolbar Add Session action isolated: only an explicit context (a group's inline +, Explorer right-click) preselects a folder; the active terminal's folder is listed as a plain option and never auto-carried after adding from a group.
+- Default the folder picker to the first workspace folder when no explicit context exists.
+- Open the native Browse dialog at the context or workspace folder via `defaultUri`.
+
+## 0.11.3
+
+- Rework the Add Session folder step into a single QuickPick used by every entry point: pick the workspace, current, or recently used folder, type or paste an absolute path (~ supported) with validation, and keep the native system dialog only as an optional Browse fallback.
+- Remember up to five recently used non-workspace folders per workspace.
+- Clarify in the conversation picker that saved conversations reopen in their own working folder (required for exact-session binding).
+
+## 0.11.2
+
+- Track and restore Codex conversations served by the shared 0.167+ app-server daemon: the daemon (detached from every terminal) now holds all thread-writer locks, so bind a terminal by matching daemon-held main-thread rollouts to the terminal's exact Codex working folder, ignoring subagent threads and conversations already bound to other terminals.
+- Never bind when two live conversations share the same folder; those terminals stay as transient Live rows instead of guessing.
+- Parse oversized Codex rollout headers incrementally so sessions with very large first lines keep binding instead of failing the observer sample.
+
 ## 0.11.1
 
 - Keep otherwise-unbound Codex CLI terminals visible as transient Live Only rows when their exact terminal process and working folder are known.

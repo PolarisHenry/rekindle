@@ -2,10 +2,11 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { expandHome } = require('./core');
 
 const PROVIDERS = [
   { label: 'Codex', value: 'codex' }, { label: 'pi', value: 'pi' },
-  { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity CLI', value: 'agy' }
+  { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity', value: 'agy' }
 ];
 
 function resolveAddContext(target) {
@@ -19,7 +20,7 @@ function resolveAddContext(target) {
 async function chooseProvider(vscode, preferred) {
   const context = resolveAddContext(preferred);
   const selected = PROVIDERS.find(item => item.value === context.provider);
-  return selected || vscode.window.showQuickPick(PROVIDERS, {
+  return selected || vscode.window.showQuickPick([...PROVIDERS].sort((a, b) => a.label.length - b.label.length), {
     title: 'Rekindle: Add Session', placeHolder: 'Choose an agent'
   });
 }
@@ -39,4 +40,70 @@ async function resolveWorkingDirectory(options) {
   return chooseDirectory(folders, suggested);
 }
 
-module.exports = { PROVIDERS, resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory };
+function directoryPickerItems(value, fixed, initial, recent, active) {
+  const typed = expandHome(String(value || '').trim());
+  const items = [];
+  if (typed && path.isAbsolute(typed) && !fixed.includes(typed)) {
+    items.push({ label: `$(folder) Use ${typed}`, typedPath: typed, description: 'Use the typed folder path', alwaysShow: true });
+  }
+  for (const cwd of fixed) items.push({ label: cwd, cwd, description: cwd === initial ? 'Current folder' : recent.includes(cwd) ? 'Recently used' : undefined });
+  if (active && !fixed.includes(active)) items.push({ label: active, cwd: active, description: 'Active terminal folder' });
+  items.push({ label: '$(folder-opened) Browse for any folder…', browse: true, description: 'Open the system folder picker', alwaysShow: true });
+  return items;
+}
+
+// Folder selection without forcing the native open-file dialog: pick a listed
+// folder (workspace, explicit context, active terminal, or recent), type or paste
+// an absolute path, or fall back to the system picker via Browse. Only an explicit
+// context (suggested) becomes the default; the active terminal folder is listed but
+// never auto-selected, so the toolbar action stays isolated from prior adds.
+function chooseDirectoryWithPicker(vscode, options = {}) {
+  const { folders = [], suggested, active, recent = [], stat = fs.stat, openDialog } = options;
+  const initial = typeof suggested === 'string' && suggested ? suggested : undefined;
+  const activeFolder = typeof active === 'string' && path.isAbsolute(active) ? active : undefined;
+  const fixed = [...new Set([initial, ...folders, ...recent.filter(item => !folders.includes(item) && item !== initial)].filter(Boolean))];
+  return new Promise(resolve => {
+    const picker = vscode.window.createQuickPick();
+    picker.title = 'Conversation working directory';
+    picker.placeholder = 'Pick a folder, or type/paste an absolute path (~ supported)';
+    let result;
+    let interacting = false;
+    const build = () => { picker.items = directoryPickerItems(picker.value, fixed, initial, recent, activeFolder); };
+    const subscriptions = [
+      picker.onDidChangeValue(() => { picker.validationMessage = undefined; build(); }),
+      picker.onDidAccept(async () => {
+        if (interacting) return;
+        const item = picker.selectedItems[0] || picker.activeItems[0];
+        if (!item) return;
+        if (item.browse) {
+          if (typeof openDialog !== 'function') return;
+          interacting = true;
+          picker.busy = true;
+          const picked = await openDialog(initial || folders[0]);
+          picker.busy = false;
+          interacting = false;
+          if (picked) { result = picked; picker.hide(); }
+          return;
+        }
+        if (item.typedPath) {
+          const info = await stat(item.typedPath).catch(() => null);
+          if (!info?.isDirectory()) { picker.validationMessage = `Not an existing folder: ${item.typedPath}`; return; }
+          result = item.typedPath;
+          picker.hide();
+          return;
+        }
+        result = item.cwd;
+        picker.hide();
+      })
+    ];
+    subscriptions.push(picker.onDidHide(() => {
+      for (const subscription of subscriptions) subscription.dispose();
+      picker.dispose();
+      resolve(result);
+    }));
+    build();
+    picker.show();
+  });
+}
+
+module.exports = { PROVIDERS, resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirectory, directoryPickerItems, chooseDirectoryWithPicker };

@@ -255,6 +255,57 @@ async function readCodexBaseline(file, size, startedAt) {
   } finally { await handle.close(); }
 }
 
+async function readCodexThreadHeader(file) {
+  let handle;
+  try {
+    const stat = await fs.stat(file);
+    if (!stat.isFile()) return undefined;
+    handle = await fs.open(file, 'r');
+    const buffer = Buffer.alloc(65536);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const text = buffer.subarray(0, bytesRead).toString('utf8');
+    const start = text.search(/\S/);
+    if (start < 0 || text[start] !== '{') return undefined;
+    // Codex headers can carry very large instruction payloads on the first line,
+    // so parse incrementally instead of JSON.parse-ing the whole line.
+    const row = readCodexMetadataObject(text, start, new Set(['type']), ['id', 'cwd', 'parent_thread_id'])?.value;
+    const meta = row?.type === 'session_meta' ? row.payload : undefined;
+    if (!meta?.id || !path.isAbsolute(meta.cwd || '')) return undefined;
+    return { id: meta.id, cwd: meta.cwd, ...(meta.parent_thread_id ? { parentThreadId: meta.parent_thread_id } : {}) };
+  } catch { return undefined; }
+  finally { await handle?.close().catch(() => {}); }
+}
+
+async function readCodexLockSession(sessionId, files) {
+  const rollout = files.find(item => item.file.endsWith(`-${sessionId}.jsonl`));
+  if (!rollout) return undefined;
+  const meta = await readCodexThreadHeader(rollout.file);
+  if (!meta || meta.id !== sessionId) return undefined;
+  return { provider: 'codex', sessionId, sessionFile: rollout.file, cwd: meta.cwd, ...(meta.parentThreadId ? { parentThreadId: meta.parentThreadId } : {}) };
+}
+
+// Codex 0.167+ delegates thread writing to a shared app-server daemon that is
+// detached from every terminal (ppid 1) and holds the thread-writer locks of ALL
+// live conversations, including subagent threads. Per-terminal lock inspection
+// therefore sees nothing. Recover the exact binding from the daemon-held locks:
+// keep only main threads (no parent_thread_id) whose rollout working folder is
+// exactly this terminal's Codex working folder, minus conversations already
+// bound to other live entries. Bind only when exactly one candidate remains.
+async function resolveSharedCodexSession(files, cwd, exclude) {
+  if (!cwd || !path.isAbsolute(cwd)) return undefined;
+  const lockIds = [...new Set(files.filter(item => /thread-writer-locks\/[0-9a-f-]+\.lock$/.test(item.file)).map(item => path.basename(item.file, '.lock')))];
+  let match;
+  for (const sessionId of lockIds) {
+    if (exclude?.has(sessionId)) continue;
+    const session = await readCodexLockSession(sessionId, files);
+    if (!session || session.parentThreadId) continue; // Subagent threads never own a terminal.
+    if (path.resolve(session.cwd) !== path.resolve(cwd)) continue;
+    if (match) return undefined; // Two live conversations share this folder: never guess.
+    match = { provider: 'codex', sessionId, sessionFile: session.sessionFile, cwd: session.cwd };
+  }
+  return match;
+}
+
 async function readManagedCodexSession(entry, managedId, codexPresent) {
   if (!codexPresent || !entry || managedId !== entry.id || entry.provider !== 'codex' || !entry.sessionId || !path.isAbsolute(entry.sessionFile || '')) return undefined;
   let handle;
@@ -443,22 +494,17 @@ class AutomaticTracker {
         const ids = [...new Set(locks.map(item => path.basename(item.file, '.lock')))];
         let session;
         if (pi.length === 1) session = pi[0];
-        else if (ids.length === 1) {
-          const sessionId = ids[0];
-          const rollout = files.find(item => item.file.endsWith(`-${sessionId}.jsonl`));
-          if (rollout) {
-            const handle = await fs.open(rollout.file, 'r');
-            try {
-              const buffer = Buffer.alloc(65536);
-              const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-              const meta = JSON.parse(buffer.subarray(0, bytesRead).toString().split('\n')[0]).payload;
-              if (meta.id === sessionId) session = { provider: 'codex', sessionId, sessionFile: rollout.file, cwd: meta.cwd };
-            } finally { await handle.close(); }
-          }
-        }
+        else if (ids.length === 1) session = await readCodexLockSession(ids[0], files);
         const boundToEntry = Boolean(entry && (managedId === entry.id || this.terminalIds.get(terminal) === entry.id || this.manager.live.get(entry.id) === terminal));
         if (!session && entry?.provider === 'codex' && boundToEntry && codexPresent) {
           session = await readManagedCodexSession(entry, entry.id, codexPresent);
+        }
+        if (!session && owner.provider === 'codex' && codexPresent) {
+          const rootCwd = owner.rootPids?.map(rootPid => codexCwds.get(rootPid)).find(Boolean);
+          if (rootCwd) {
+            const claimed = new Set(this.manager.entries.filter(row => row.provider === 'codex' && row.sessionId && row.id !== entry?.id && this.manager.live.has(row.id)).map(row => row.sessionId));
+            session = await resolveSharedCodexSession(files, rootCwd, claimed);
+          }
         }
         if (!session && entry?.provider === 'codex' && boundToEntry && !codexPresent) {
           await this.updateTerminalProgress(terminal, false, pid);
@@ -576,7 +622,7 @@ class AutomaticTracker {
     if (targets.statusBar) this.completionStatusBar?.add(entry, dedupeKey);
     if (!targets.native) return;
     const pathName = path.basename(entry.cwd || '') || entry.cwd || 'unknown folder';
-    const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude', agy:'AGY' })[entry.provider] || entry.provider;
+    const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude', agy:'Antigravity' })[entry.provider] || entry.provider;
     // Native notification buttons close the toast and can restore focus to the
     // previously active editor. A command link leaves the toast open, so revealing
     // the terminal never competes with that editor-focus restoration.
@@ -650,4 +696,4 @@ class AutomaticTracker {
     this.terminalProgress.clear();
   }
 }
-module.exports = { completionSummary, AutomaticTracker, descendants, terminalAgent, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };
+module.exports = { completionSummary, AutomaticTracker, descendants, terminalAgent, parseProcesses, parseOpenFiles, readCodexLifecycle, readCodexThreadHeader, readCodexLockSession, resolveSharedCodexSession, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };
