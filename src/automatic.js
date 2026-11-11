@@ -9,6 +9,17 @@ const { writeTerminalProgress } = require('./terminal-progress');
 
 const registry = path.join(os.homedir(), '.local/state/vscode-agent-session-restore/pi');
 
+function completionSummary(name) {
+  let text = '', width = 0;
+  const full = String(name || 'Session').replace(/[\r\n\t]/g, ' ');
+  for (const char of full) {
+    const size = char.codePointAt(0) > 0x7f ? 2 : 1;
+    if (width + size > 12) return text + '…';
+    text += char; width += size;
+  }
+  return text;
+}
+
 function descendants(pid, processes) {
   const result = new Set([pid]);
   let changed;
@@ -535,12 +546,17 @@ class AutomaticTracker {
     this.notifiedCompletionKeys.add(dedupeKey);
     this.boundSet(this.notifiedCompletionKeys, 2048);
     const pathName = path.basename(entry.cwd || '') || entry.cwd || 'unknown folder';
-    const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude Code', agy:'Antigravity CLI' })[entry.provider] || entry.provider;
+    const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude', agy:'AGY' })[entry.provider] || entry.provider;
     // Native notification buttons close the toast and can restore focus to the
     // previously active editor. A command link leaves the toast open, so revealing
     // the terminal never competes with that editor-focus restoration.
     const command = `command:agentSessionRestore.openCompletedSession?${encodeURIComponent(JSON.stringify([entry.id, entry.provider, entry.sessionId]))}`;
-    void this.vscode.window.showInformationMessage(`${providerName} · ${entry.name} finished · ${pathName} · [Open Session](${command})`)
+    const summary = completionSummary(entry.name);
+    // Keep the clickable label at the start of a short, single-line toast. Native
+    // notification controls consume width on hover; long text can expand the toast
+    // and move a trailing link away from the pointer.
+    const tooltip = `${providerName} · ${entry.name} · ${entry.cwd || pathName}`.replace(/[\\"\r\n]/g, ' ');
+    void this.vscode.window.showInformationMessage(`[Open Session](${command} "${tooltip}") · ${providerName} · ${summary} ✓`)
       .then(undefined, error => this.log(`Notification failed: ${error.message}`));
   }
 
@@ -604,4 +620,4 @@ class AutomaticTracker {
     this.terminalProgress.clear();
   }
 }
-module.exports = { AutomaticTracker, descendants, terminalAgent, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };
+module.exports = { completionSummary, AutomaticTracker, descendants, terminalAgent, parseProcesses, parseOpenFiles, readCodexLifecycle, readManagedCodexSession, consumeCompletion, installPiBridge, normalizeActivity };

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.4
+
+- Place Open Session first in a compact completion notification, keeping it clear of hover controls and truncation.
+- Shorten long session names by display width and retain full names and folders in the link tooltip.
+
 ## 0.10.3
 
 - Open completed sessions through a command link inside the notification instead of an auto-closing button, avoiding notification-close editor focus restoration.

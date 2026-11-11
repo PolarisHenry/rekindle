@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {

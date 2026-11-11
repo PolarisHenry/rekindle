@@ -7,7 +7,7 @@ const os=require('node:os');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {stripTypeScriptTypes}=require('node:module');
-const {AutomaticTracker,descendants,terminalAgent,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
+const {completionSummary,AutomaticTracker,descendants,terminalAgent,parseProcesses,parseOpenFiles,readCodexLifecycle,readManagedCodexSession,consumeCompletion,installPiBridge}=require('../src/automatic');
 
 test('terminal ownership excludes nested agents and ambiguous sibling agents',()=>{
  const processes=parseProcesses('100 1 zsh\n101 100 pi\n102 101 sh\n103 102 agy\n104 103 pi\n200 1 zsh\n201 200 agy\n202 201 codex');
@@ -98,7 +98,7 @@ test('Codex sample pipeline clears Working and shows exactly one completion toas
  await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'turn-one',completed_at:Math.ceil(Date.now()/1000),last_agent_message:'private text'});
  await fx.tracker.sample();
  assert.equal(fx.manager.working.has(fx.entry.id),false);
- assert.equal(fx.messages.length,1); assert.match(fx.messages[0],/Codex · Codex task finished ·/);
+ assert.equal(fx.messages.length,1); assert.match(fx.messages[0],/^\[Open Session\]/);
  await fx.tracker.sample();
  assert.equal(fx.messages.length,1,'repeated idle sampling cannot notify twice');
  assert.ok(fx.progress.includes(true));
@@ -115,7 +115,7 @@ test('notification action opens only the matching session on click; restart keep
  await fx.tracker.sample();
  await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(fx.opens,[],'showing a completion never opens a terminal');
- const match=fx.messages[0].match(/\[Open Session\]\(command:agentSessionRestore.openCompletedSession\?([^)]*)\)/);
+ const match=fx.messages[0].match(/\[Open Session\]\(command:agentSessionRestore.openCompletedSession\?([^ ]*) "[^"\n]*"\)/);
  assert.ok(match,'completion uses a command link instead of a dismissing button');
  const args=JSON.parse(decodeURIComponent(match[1]));
  assert.deepEqual(args,[fx.entry.id,fx.entry.provider,fx.entry.sessionId]);
@@ -185,7 +185,7 @@ test('Codex completion toasts stay bound to each session when two agents finish 
  assert.equal(fx.manager.working.has('entry-id-2'),true);
  await appendCodexEvent(secondFile,{type:'task_complete',turn_id:'second-turn',completed_at:Math.ceil(Date.now()/1000)});
  await fx.tracker.sample();
- assert.equal(fx.messages.length,2); assert.match(fx.messages[1],/Other task finished/);
+ assert.equal(fx.messages.length,2); assert.match(fx.messages[1],/Other task ✓$/);
 });
 test('terminal tab description default exposes OSC progress without replacing the VS Code template',()=>{
  const manifest=require('../package.json');
@@ -474,4 +474,10 @@ test('unidentifiable live agent is Unknown, never idle or a completion, and clea
  assert.equal(manager.working.has(entry.id),false);
  assert.deepEqual(messages,[]);
  assert.equal(writes.at(-1),false);
+});
+
+test('completion labels stay short and single-line for long English and Chinese titles',()=>{
+ assert.equal(completionSummary('查询问题和很长的会话名字'),'查询问题和很…');
+ assert.equal(completionSummary('a'.repeat(60)),'a'.repeat(12)+'…');
+ assert.equal(completionSummary('short\nname'),'short name');
 });
