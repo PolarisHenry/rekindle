@@ -1,5 +1,6 @@
 'use strict';
 const {test}=require('node:test');
+const {openCompletedSession}=require('../src/session-actions');
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const os=require('node:os');
@@ -68,10 +69,10 @@ async function codexSampleFixture(t, notifications = true, initialEvents = []) {
  for(const event of initialEvents) await fs.appendFile(sessionFile,JSON.stringify({timestamp:new Date(event.timestamp ?? Date.now()).toISOString(),type:'event_msg',payload:event.payload})+'\n');
  const entry={id:'entry-id',provider:'codex',sessionId:'codex-session',sessionFile,cwd:dir,name:'Codex task',enabled:true};
  const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}},show(preserve){this.shownWith=preserve;}};
- const messages=[],progress=[]; let clickAction; const opens=[];
+ const messages=[],progress=[]; const opens=[];
  const vscode={
   workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>key==='completionNotifications'?notifications:fallback})},
-  window:{terminals:[terminal],showInformationMessage:(message,...actions)=>{messages.push(message);return Promise.resolve(clickAction && actions.includes(clickAction) ? clickAction : undefined);}}
+  window:{terminals:[terminal],showInformationMessage:(message,...actions)=>{assert.deepEqual(actions,[],'completion must not use a dismissing notification button');messages.push(message);return Promise.resolve(undefined);}}
  };
  const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set(),status:new Map(),changed(){},save:async()=>{},open:async(current)=>{opens.push(current.id); const target=manager.live.get(current.id); return target;}};
  manager.observe=session=>({entry:manager.entries.find(row=>row.sessionId===session.sessionId)||entry,dirty:false});
@@ -80,7 +81,7 @@ async function codexSampleFixture(t, notifications = true, initialEvents = []) {
   execFile:async command=>command==='ps'?{stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'}:{stdout:''},
   writeTerminalProgress:async(_terminal,working)=>{progress.push(working);return true;}
  });
- return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens,setClickAction(value){clickAction=value;}};
+ return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens};
 }
 
 async function appendCodexEvent(file,payload,timestamp=Date.now()) {
@@ -110,11 +111,16 @@ test('notification action opens only the matching session on click; restart keep
  await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'restart-turn'});
  await fx.tracker.sample();
  await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'restart-turn',completed_at:Math.ceil(Date.now()/1000)});
- fx.setClickAction('Open Session');
+
  await fx.tracker.sample();
  await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(fx.opens,[],'showing a completion never opens a terminal');
+ const match=fx.messages[0].match(/\[Open Session\]\(command:agentSessionRestore.openCompletedSession\?([^)]*)\)/);
+ assert.ok(match,'completion uses a command link instead of a dismissing button');
+ const args=JSON.parse(decodeURIComponent(match[1]));
+ assert.deepEqual(args,[fx.entry.id,fx.entry.provider,fx.entry.sessionId]);
+ await openCompletedSession(fx.manager,...args);
  assert.deepEqual(fx.opens,[fx.entry.id]);
- assert.equal(fx.terminal.shownWith,false,'only clicking the toast selects and focuses that terminal');
  fx.tracker.closed(fx.terminal);
  const replacement={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:fx.entry.id}},show(preserve){this.shownWith=preserve;}};
  fx.vscode.window.terminals[0]=replacement;

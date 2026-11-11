@@ -34,4 +34,10 @@ async function showSessionDiagnostics({ vscode, manager, tree, output, entry }) 
   else if (choice === 'Open Logs') output.show();
 }
 
-module.exports = { selectSession, showSessionDiagnostics };
+async function openCompletedSession(manager, id, provider, sessionId) {
+  const current = manager.entries.find(entry => entry.id === id && entry.provider === provider && entry.sessionId === sessionId);
+  if (!current) return;
+  return manager.open(current, true);
+}
+
+module.exports = { selectSession, showSessionDiagnostics, openCompletedSession };

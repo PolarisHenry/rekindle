@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {selectSession,showSessionDiagnostics}=require('../src/session-actions');
+const {selectSession,showSessionDiagnostics,openCompletedSession}=require('../src/session-actions');
 
 test('command-palette actions can select a saved session without mutating it',async()=>{
  const entry={id:'saved',provider:'codex',sessionId:'exact',name:'Saved',cwd:'/work'};
@@ -41,3 +41,13 @@ test('diagnostic dismissal is inert and failure action retries the exact tracked
  await showSessionDiagnostics({vscode,manager,tree,output:{show(){}}});
  assert.deepEqual(opened,[]);
 });
+
+ test('completion links open only the still-matching saved conversation once',async()=>{
+ const entry={id:'id',provider:'pi',sessionId:'exact'};const calls=[];
+ const manager={entries:[entry],open:async(...args)=>calls.push(args)};
+ await openCompletedSession(manager,'id','pi','old');
+ await openCompletedSession(manager,'deleted','pi','exact');
+ assert.deepEqual(calls,[]);
+ await openCompletedSession(manager,'id','pi','exact');
+ assert.deepEqual(calls,[[entry,true]]);
+ });

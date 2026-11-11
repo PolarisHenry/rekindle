@@ -10,7 +10,7 @@ const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
 const { CONTEXT_KEY: NOTIFICATION_CONTEXT, notificationsEnabled, setNotificationsEnabled } = require('./completion-notifications');
-const { selectSession, showSessionDiagnostics } = require('./session-actions');
+const { selectSession, showSessionDiagnostics, openCompletedSession } = require('./session-actions');
 
 async function activate(context) {
   const legacyExtension = vscode.extensions?.getExtension(OLD_EXTENSION_ID);
@@ -134,6 +134,7 @@ async function activate(context) {
   });
   command('addHere', async target => dispatchAddHere(target, (...args) => vscode.commands.executeCommand(...args)));
 
+  command('openCompletedSession', (id, provider, sessionId) => openCompletedSession(manager, id, provider, sessionId));
   command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
   command('retryRestore', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen, true); });
   command('restore', async () => {

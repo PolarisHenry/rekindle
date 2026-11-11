@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3
+
+- Open completed sessions through a command link inside the notification instead of an auto-closing button, avoiding notification-close editor focus restoration.
+- Reveal the target terminal once and ignore stale completion links whose saved conversation has changed or been removed.
+- Verify maximized and manually resized panels retain their dimensions when opening completed sessions with an editor preview present.
+
 ## 0.10.2
 
 - Focus the selected terminal when opening a session instead of leaving focus in the sidebar/editor.

@@ -536,15 +536,12 @@ class AutomaticTracker {
     this.boundSet(this.notifiedCompletionKeys, 2048);
     const pathName = path.basename(entry.cwd || '') || entry.cwd || 'unknown folder';
     const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude Code', agy:'Antigravity CLI' })[entry.provider] || entry.provider;
-    void this.vscode.window.showInformationMessage(`${providerName} · ${entry.name} finished · ${pathName}`, 'Open Session').then(async choice => {
-      if (choice !== 'Open Session') return;
-      const current = this.manager.entries.find(item => item.id === entry.id);
-      if (!current || !this.manager.entries.includes(current)) return;
-      try {
-        const terminal = await this.manager.open(current, true);
-        if (terminal && this.vscode.window.terminals.includes(terminal)) terminal.show(false);
-      } catch (error) { this.log(`Could not open completed session: ${error.message}`); }
-    }, error => this.log(`Notification failed: ${error.message}`));
+    // Native notification buttons close the toast and can restore focus to the
+    // previously active editor. A command link leaves the toast open, so revealing
+    // the terminal never competes with that editor-focus restoration.
+    const command = `command:agentSessionRestore.openCompletedSession?${encodeURIComponent(JSON.stringify([entry.id, entry.provider, entry.sessionId]))}`;
+    void this.vscode.window.showInformationMessage(`${providerName} · ${entry.name} finished · ${pathName} · [Open Session](${command})`)
+      .then(undefined, error => this.log(`Notification failed: ${error.message}`));
   }
 
   async updateTerminalProgress(terminal, working, pid) {
