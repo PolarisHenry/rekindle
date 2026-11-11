@@ -3,7 +3,7 @@ const path = require('node:path');
 const { sessionKey, discoverSessions, isInWorkspace, normalizeTimestamp } = require('./core');
 const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity' };
-function rowKey(entry) { return entry.ephemeral ? `live:${entry.id}` : sessionKey(entry); }
+function rowKey(entry) { return entry.ephemeral ? `live:${entry.id}` : entry.pendingStart ? `pending:${entry.id}` : sessionKey(entry); }
 
 function activityTime(entry) {
   const activity = Math.max(0, ...[entry.lastActivityAt, entry.updatedAt].map(normalizeTimestamp));
@@ -241,7 +241,8 @@ class SessionTree {
     if (node?.kind === 'folder' || node?.kind === 'agent') return node.children || node.sessions;
     if (node) return [];
     if (this.showHistory) await this.loadHistory();
-    const groups = groupedSessions([...this.manager.entries, ...(this.manager.liveOnlyEntries?.values() || [])], this.history, this.showHistory, this.displayOptions());
+    const pendingRows = [...(this.manager.pending?.values() || [])].map(entry => ({ ...entry, pendingStart: true }));
+    const groups = groupedSessions([...this.manager.entries, ...pendingRows, ...(this.manager.liveOnlyEntries?.values() || [])], this.history, this.showHistory, this.displayOptions());
     if (this.view) this.view.message = this.search ? `Search: ${this.search}${groups.length ? '' : ' — No matching sessions.'}` : groups.length ? undefined : 'No matching sessions. Use the … menu to show history or all folders.';
     return groups;
   }
@@ -249,12 +250,13 @@ class SessionTree {
   getTreeItem(node) {
     const v = this.vscode;
     if (node.kind === 'folder' || node.kind === 'agent') {
-      const enabled = node.sessions.filter(entry => entry.enabled !== false && !entry.ephemeral).length;
+      const enabled = node.sessions.filter(entry => entry.enabled !== false && !entry.ephemeral && !entry.pendingStart).length;
       const liveOnly = node.sessions.filter(entry => entry.ephemeral).length;
+      const starting = node.sessions.filter(entry => entry.pendingStart).length;
       const defaultExpanded = node.sessions.some(entry => !entry.historyOnly);
       const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, (this.expandedGroups?.get(node.groupId) ?? defaultExpanded) ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
       item.id = `group:${node.groupId}`;
-      item.description = `${enabled} enabled · ${liveOnly ? `${liveOnly} live · ` : ''}${node.sessions.length} sessions`;
+      item.description = `${enabled} enabled · ${liveOnly ? `${liveOnly} live · ` : ''}${starting ? `${starting} starting · ` : ''}${node.sessions.length} sessions`;
       item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
       item.iconPath = node.kind === 'folder' ? new v.ThemeIcon('folder') : agentIcon(v, node.provider);
       item.contextValue = node.kind === 'folder' ? 'sessionFolder' : 'sessionAgent';
@@ -264,6 +266,14 @@ class SessionTree {
     const enabled = node.enabled !== false;
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
     item.id = `session:${rowKey(node)}`;
+    if (node.pendingStart) {
+      item.description = 'Starting…';
+      item.tooltip = `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\nWaiting for the agent to save its conversation. Send it a first message; the row becomes exactly bound and restorable automatically.`;
+      item.iconPath = new v.ThemeIcon('sync~spin');
+      item.contextValue = 'pendingSession';
+      item.command = { command: 'agentSessionRestore.open', title: 'Focus Terminal', arguments: [node] };
+      return item;
+    }
     const working = this.manager.working?.has(node.id) === true;
     const status = this.manager.status?.get(node.id);
     const statusText = node.ephemeral ? 'Unknown · Live Only' : working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';

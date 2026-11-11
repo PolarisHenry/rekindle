@@ -87,6 +87,11 @@ async function activate(context) {
 
   async function pickEntry(entry) {
     if (entry?.ephemeral) return entry;
+    if (entry?.pendingStart) {
+      const pending = manager.pending.get(entry.id);
+      if (pending?.terminal && vscode.window.terminals.includes(pending.terminal) && pending.terminal.exitStatus === undefined) pending.terminal.show(false);
+      return undefined;
+    }
     if (entry?.sessionId) return sessionTree.ensureTracked(entry);
     const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: 'Choose a session' });
     return picked?.entry;

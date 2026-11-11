@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.8
+
+- Show newly created Add Session conversations immediately as a spinning **Starting…** row while the CLI has not yet saved its conversation ID, instead of leaving the sidebar blank until the first message; clicking the row focuses its terminal.
+
 ## 0.11.7
 
 - Nudge Codex and Antigravity icons up to match Claude at ~80% of the icon box (pi stays at 70% to offset its denser artwork).

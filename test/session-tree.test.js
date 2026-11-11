@@ -5,6 +5,21 @@ const { groupedSessions, SessionTree } = require('../src/session-tree');
 const { SESSION_COLORS, agentIcon, sessionIcon } = require('../src/agent-icons');
 const row = (id, cwd, enabled = true) => ({ id, provider: 'pi', sessionId: id, name: id, cwd, enabled });
 
+test('pending sessions stay visible in the default view until their conversation binds', () => {
+  const pending = { id: 'pending-uuid', provider: 'pi', sessionId: undefined, name: 'New Session', cwd: '/work/first' };
+  const groups = groupedSessions([row('a','/work/first'), { ...pending, pendingStart: true }], [], false);
+  assert.equal(groups.length, 1);
+  const sessions = groups[0].sessions;
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions.some(entry => entry.pendingStart && entry.name === 'New Session'), true);
+  assert.equal(sessions.some(entry => entry.id === 'a'), true, 'existing tracked sessions are untouched');
+  const twoPending = groupedSessions([
+    { ...pending, id: 'p1', pendingStart: true },
+    { ...pending, id: 'p2', name: 'Second', pendingStart: true }
+  ], [], false);
+  assert.equal(twoPending[0].sessions.length, 2, 'distinct pending rows never collide before their session IDs exist');
+});
+
 test('default sidebar hides disabled sessions while history reveals them', () => {
   const groups = groupedSessions([row('a','/work/first'),row('b','/work/second'),row('c','/work/first',false)], [], false);
   assert.equal(groups.length, 2);
