@@ -42,7 +42,7 @@ async function activate(context) {
   const refresh = id => {
     const entry = id && manager?.entries.find(item => item.id === id);
     sessionTree?.refresh(entry);
-    void vscode.commands.executeCommand('setContext', 'agentSessionRestore.hasSessions', manager.entries.length > 0);
+    void vscode.commands.executeCommand('setContext', 'agentSessionRestore.hasSessions', manager.entries.length + (manager.liveOnlyEntries?.size || 0) > 0);
   };
   const log = message => output.appendLine(`[${new Date().toISOString()}] ${message}`);
   if (migrationResult.status === 'imported' || migrationResult.status === 'recovered-import') log(`Imported ${context.workspaceState.get('agentSessionRestore.sessions.v1', []).length} legacy session record(s).`);
@@ -86,6 +86,7 @@ async function activate(context) {
   }));
 
   async function pickEntry(entry) {
+    if (entry?.ephemeral) return entry;
     if (entry?.sessionId) return sessionTree.ensureTracked(entry);
     const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: 'Choose a session' });
     return picked?.entry;

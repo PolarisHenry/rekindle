@@ -20,6 +20,22 @@ test('terminal ownership excludes nested agents and ambiguous sibling agents',()
  assert.equal(ambiguous.children.size,0);
 });
 
+test('terminal ownership recognizes Codex that replaces the terminal shell and excludes nested agents',()=>{
+ const processes=parseProcesses('300 1 /usr/local/bin/codex\n301 300 /bin/sh\n302 301 /usr/local/bin/agy\n303 302 /usr/local/bin/pi');
+ const owner=terminalAgent(300,processes);
+ assert.equal(owner.provider,'codex');
+ assert.deepEqual(owner.rootPids,[300]);
+ assert.deepEqual([...owner.children],[300,301]);
+});
+
+test('top-level Codex stays the terminal owner when it starts nested agents',()=>{
+ const processes=parseProcesses('400 1 /usr/local/bin/codex\n401 400 /bin/sh\n402 401 /usr/local/bin/agy\n403 402 /usr/local/bin/pi');
+ const owner=terminalAgent(400,processes);
+ assert.equal(owner.provider,'codex');
+ assert.deepEqual(owner.rootPids,[400]);
+ assert.deepEqual([...owner.children],[400,401]);
+});
+
 test('nested AGY hook cannot change a pi terminal provider or session identity',async t=>{
  const fx=await codexSampleFixture(t);
  Object.assign(fx.entry,{provider:'pi',sessionId:'pi-original',automatic:true});
@@ -86,6 +102,60 @@ async function codexSampleFixture(t, notifications = true, initialEvents = [], l
  });
  return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens,statusItems};
 }
+
+test('unbound shared-daemon Codex appears as a stable transient row, binds cleanly, and never persists a fake ID',async t=>{
+ const fx=await codexSampleFixture(t);
+ const {terminal,manager,tracker,dir}=fx;
+ manager.entries=[];
+ manager.live.clear();
+ terminal.creationOptions.env={};
+ manager.liveOnlyEntries=new Map();
+ manager.liveOnlyByTerminal=new WeakMap();
+ const changed=[];
+ manager.changed=id=>changed.push(id);
+ manager.upsertLiveOnly=(current,provider,cwd)=>{
+  let id=manager.liveOnlyByTerminal.get(current);
+  let entry=id&&manager.liveOnlyEntries.get(id);
+  if(!entry){id=`live-only:${changed.length+1}`;entry={id,provider,cwd,name:current.name||'Codex task',ephemeral:true,enabled:false};manager.liveOnlyByTerminal.set(current,id);manager.liveOnlyEntries.set(id,entry);manager.live.set(id,current);manager.status.set(id,{state:'unknown',reason:'No exact shared-daemon session binding'});manager.changed(id);}
+  return entry;
+ };
+ manager.removeLiveOnly=id=>{const removed=manager.liveOnlyEntries.delete(id);manager.live.delete(id);manager.status.delete(id);return removed;};
+ manager.removeLiveOnlyForTerminal=current=>{const id=manager.liveOnlyByTerminal.get(current);return id?manager.removeLiveOnly(id):false;};
+ tracker.execFile=async(command,args=[])=>{
+  if(command==='ps') return {stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'};
+  if(args.includes('-d')) return {stdout:`p101\nfcwd\nn${dir}\n`};
+  return {stdout:''};
+ };
+ await tracker.sample();
+ assert.equal(manager.liveOnlyEntries.size,1);
+ const [entry]=manager.liveOnlyEntries.values();
+ assert.equal(entry.cwd,dir);
+ assert.equal(entry.ephemeral,true);
+ assert.equal(entry.sessionId,undefined);
+ assert.equal(manager.entries.length,0);
+ assert.equal(changed.length,1);
+ await tracker.sample();
+ assert.equal(manager.liveOnlyEntries.size,1);
+ assert.equal(changed.length,1,'unchanged polls do not refresh the tree');
+
+ const exactId='11111111-1111-4111-8111-111111111111';
+ const rollout=path.join(dir,`rollout-${exactId}.jsonl`);
+ await fs.writeFile(rollout,JSON.stringify({type:'session_meta',payload:{id:exactId,cwd:dir}})+'\n');
+ tracker.execFile=async(command,args=[])=>{
+  if(command==='ps') return {stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'};
+  if(args.includes('-d')) return {stdout:`p101\nfcwd\nn${dir}\n`};
+  return {stdout:`p101\nn${path.join(dir,`thread-writer-locks/${exactId}.lock`)}\np101\nn${rollout}\n`};
+ };
+ manager.observe=session=>{
+  const saved={id:'saved-entry',provider:session.provider,sessionId:session.sessionId,sessionFile:session.sessionFile,cwd:session.cwd,name:'Bound conversation',enabled:true};
+  manager.entries.push(saved);
+  return {entry:saved,dirty:true};
+ };
+ await tracker.sample();
+ assert.equal(manager.liveOnlyEntries.size,0);
+ assert.equal(manager.entries[0].sessionId,exactId);
+ assert.equal(manager.entries.some(row=>row.id.startsWith('live-only:')),false);
+});
 
 async function appendCodexEvent(file,payload,timestamp=Date.now()) {
  await fs.appendFile(file,JSON.stringify({timestamp:new Date(timestamp).toISOString(),type:'event_msg',payload})+'\n');

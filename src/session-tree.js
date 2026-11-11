@@ -3,6 +3,7 @@ const path = require('node:path');
 const { sessionKey, discoverSessions, isInWorkspace, normalizeTimestamp } = require('./core');
 const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity CLI' };
+function rowKey(entry) { return entry.ephemeral ? `live:${entry.id}` : sessionKey(entry); }
 
 function activityTime(entry) {
   const activity = Math.max(0, ...[entry.lastActivityAt, entry.updatedAt].map(normalizeTimestamp));
@@ -13,15 +14,16 @@ function activityTime(entry) {
 function groupedSessions(tracked, history, showHistory, options = {}) {
   const { groupBy = 'folder', workspaceFolders = [], workspaceOnly = true, currentFolder, search = '', hiddenHistory = new Set(), historyRangeDays = 'all', now = Date.now() } = options;
   const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const rows = new Map(tracked.map(entry => [sessionKey(entry), entry]));
+  const rows = new Map(tracked.map(entry => [rowKey(entry), entry]));
   if (showHistory) for (const row of history) {
-    if (hiddenHistory.has(sessionKey(row))) continue;
-    if (!rows.has(sessionKey(row))) rows.set(sessionKey(row), {
+    if (hiddenHistory.has(rowKey(row))) continue;
+    if (!rows.has(rowKey(row))) rows.set(rowKey(row), {
       ...row, id: `history:${sessionKey(row)}`, name: row.title || row.sessionId,
       enabled: false, historyOnly: true
     });
   }
   const withinHistoryRange = entry => {
+    if (entry.ephemeral) return true;
     const excludedByHistory = entry.historyOnly || entry.archived || entry.enabled === false;
     if (!showHistory || !excludedByHistory || historyRangeDays === 'all') return true;
     // Explicit opening can reveal an old history row without changing its sort rank.
@@ -36,11 +38,11 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
   };
   const groups = new Map();
   for (const entry of rows.values()) {
-    if (hiddenHistory.has(sessionKey(entry)) && (entry.historyOnly || entry.archived || entry.enabled === false)) continue;
+    if (hiddenHistory.has(rowKey(entry)) && (entry.historyOnly || entry.archived || entry.enabled === false)) continue;
     if (!showHistory && entry.archived) continue;
     // The normal view is the set that will actually restore on this workspace.
     // Paused and discovered-only conversations are available from Show History.
-    if (!showHistory && (entry.historyOnly || entry.enabled === false)) continue;
+    if (!showHistory && (entry.historyOnly || (entry.enabled === false && !entry.ephemeral))) continue;
     if (!withinHistoryRange(entry)) continue;
     const text = [entry.name, entry.title, entry.cwd, entry.sessionId, entry.provider, AGENT_NAMES[entry.provider]].filter(Boolean).join(' ').toLocaleLowerCase();
     if (!terms.every(term => text.includes(term))) continue;
@@ -57,7 +59,7 @@ function groupedSessions(tracked, history, showHistory, options = {}) {
   const favorite = group => group.sessions.some(entry => entry.favorite === true);
   const label = group => group.kind === 'folder' ? group.cwd : AGENT_NAMES[group.provider] || group.provider;
   const compare = (a,b) => rank(a)-rank(b) || Number(favorite(b))-Number(favorite(a)) || latest(b)-latest(a) || label(a).localeCompare(label(b)) || a.groupId?.localeCompare(b.groupId || '') || '';
-  const compareSessions = (a,b) => Number(b.favorite === true)-Number(a.favorite === true) || activityTime(b)-activityTime(a) || sessionKey(a).localeCompare(sessionKey(b));
+  const compareSessions = (a,b) => Number(b.favorite === true)-Number(a.favorite === true) || activityTime(b)-activityTime(a) || rowKey(a).localeCompare(rowKey(b));
   for (const [key, group] of groups) {
     group.groupId = JSON.stringify([groupBy, key]);
     group.sessions.sort(compareSessions);
@@ -239,7 +241,7 @@ class SessionTree {
     if (node?.kind === 'folder' || node?.kind === 'agent') return node.children || node.sessions;
     if (node) return [];
     if (this.showHistory) await this.loadHistory();
-    const groups = groupedSessions(this.manager.entries, this.history, this.showHistory, this.displayOptions());
+    const groups = groupedSessions([...this.manager.entries, ...(this.manager.liveOnlyEntries?.values() || [])], this.history, this.showHistory, this.displayOptions());
     if (this.view) this.view.message = this.search ? `Search: ${this.search}${groups.length ? '' : ' — No matching sessions.'}` : groups.length ? undefined : 'No matching sessions. Use the … menu to show history or all folders.';
     return groups;
   }
@@ -247,11 +249,12 @@ class SessionTree {
   getTreeItem(node) {
     const v = this.vscode;
     if (node.kind === 'folder' || node.kind === 'agent') {
-      const enabled = node.sessions.filter(entry => entry.enabled !== false).length;
+      const enabled = node.sessions.filter(entry => entry.enabled !== false && !entry.ephemeral).length;
+      const liveOnly = node.sessions.filter(entry => entry.ephemeral).length;
       const defaultExpanded = node.sessions.some(entry => !entry.historyOnly);
       const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, (this.expandedGroups?.get(node.groupId) ?? defaultExpanded) ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
       item.id = `group:${node.groupId}`;
-      item.description = `${enabled} enabled · ${node.sessions.length} sessions`;
+      item.description = `${enabled} enabled · ${liveOnly ? `${liveOnly} live · ` : ''}${node.sessions.length} sessions`;
       item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
       item.iconPath = node.kind === 'folder' ? new v.ThemeIcon('folder') : agentIcon(v, node.provider);
       item.contextValue = node.kind === 'folder' ? 'sessionFolder' : 'sessionAgent';
@@ -260,19 +263,22 @@ class SessionTree {
     const running = this.manager.live.get(node.id);
     const enabled = node.enabled !== false;
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
-    item.id = `session:${sessionKey(node)}`;
+    item.id = `session:${rowKey(node)}`;
     const working = this.manager.working?.has(node.id) === true;
     const status = this.manager.status?.get(node.id);
-    const statusText = working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';
-    item.description = [node.favorite ? '★ Favorite' : '', node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', statusText].filter(Boolean).join(' · ');
-    item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}${status?.reason ? `\n${status.reason}` : ''}\nClick to open.`;
+    const statusText = node.ephemeral ? 'Unknown · Live Only' : working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';
+    item.description = node.ephemeral ? statusText : [node.favorite ? '★ Favorite' : '', node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', statusText].filter(Boolean).join(' · ');
+    item.tooltip = node.ephemeral
+      ? `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\nThis Codex terminal is live, but no exact conversation ID is available. Open focuses the existing terminal only; it cannot be restored automatically.${status?.reason ? `\n${status.reason}` : ''}`
+      : `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}${status?.reason ? `\n${status.reason}` : ''}\nClick to open.`;
     item.iconPath = sessionIcon(v, node.provider, working, v.workspace?.getConfiguration('agentSessionRestore').get('sessionPulse', true) !== false && v.workspace?.getConfiguration('workbench').get('reduceMotion') !== 'on');
-    item.contextValue = `${node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession'}${node.favorite ? 'Favorite' : ''}${status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Failed' : ''}`;
+    item.contextValue = node.ephemeral ? 'liveSessionUnknown' : `${node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession'}${node.favorite ? 'Favorite' : ''}${status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Failed' : ''}`;
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;
   }
 
   async ensureTracked(node) {
+    if (node?.ephemeral) return undefined;
     return this.manager.entries.find(entry => entry.id === node.id)
       || this.manager.entries.find(entry => sessionKey(entry) === sessionKey(node))
       || this.manager.add(node, node.name, false);

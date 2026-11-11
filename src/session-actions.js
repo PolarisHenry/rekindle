@@ -3,8 +3,8 @@
 const { sessionKey } = require('./core');
 
 async function selectSession(vscode, manager, tree, target) {
-  if (target?.sessionId) return target;
-  const selected = tree.view?.selection?.find(item => item?.sessionId);
+  if (target?.sessionId || target?.ephemeral) return target;
+  const selected = tree.view?.selection?.find(item => item?.sessionId || item?.ephemeral);
   if (selected) return selected;
   if (tree.showHistory) await tree.loadHistory();
   const rows = new Map(manager.entries.map(entry => [sessionKey(entry), entry]));
@@ -21,6 +21,14 @@ async function selectSession(vscode, manager, tree, target) {
 async function showSessionDiagnostics({ vscode, manager, tree, output, entry }) {
   const chosen = await selectSession(vscode, manager, tree, entry);
   if (!chosen) return;
+  if (chosen.ephemeral) {
+    const status = manager.status.get(chosen.id);
+    const reason = status?.reason || 'The Codex process has not exposed an exact conversation binding.';
+    const choice = await vscode.window.showInformationMessage(`${chosen.name}\nState: Unknown (live terminal only)\nFolder: ${chosen.cwd}\n${reason}`, 'Open Terminal', 'Open Logs');
+    if (choice === 'Open Terminal') await manager.open(chosen, true);
+    else if (choice === 'Open Logs') output.show();
+    return;
+  }
   const tracked = manager.entries.find(item => item.id === chosen.id)
     || manager.entries.find(item => item.provider === chosen.provider && item.sessionId === chosen.sessionId);
   const status = tracked && manager.status.get(tracked.id);

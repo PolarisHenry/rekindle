@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+
+- Keep otherwise-unbound Codex CLI terminals visible as transient Live Only rows when their exact terminal process and working folder are known.
+- Let Open focus the existing terminal without persisting a guessed session ID or attempting auto-restore; remove the row when the terminal closes or becomes exactly bound.
+
 ## 0.11.0
 
 - Add persistent, clickable completion reminders to the status bar by default; optionally use native notifications or both, and clear pending reminders when disabled or opened.

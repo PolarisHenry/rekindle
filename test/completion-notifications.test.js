@@ -36,7 +36,6 @@ function mockVscode({ enabled, location } = {}) {
 }
 
 test('Marketplace defaults to persistent status bar reminders and contributes location controls', () => {
-  assert.equal(manifest.version, '0.11.0');
   assert.equal(manifest.contributes.configuration.properties['agentSessionRestore.completionNotifications'].default, true);
   assert.equal(manifest.contributes.configuration.properties['agentSessionRestore.completionNotificationLocation'].default, 'statusBar');
   assert.deepEqual(manifest.contributes.configuration.properties['agentSessionRestore.completionNotificationLocation'].enum, ['statusBar', 'native', 'both']);

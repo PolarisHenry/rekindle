@@ -178,6 +178,16 @@ test('history range filters only disabled/native rows while favorites and curren
   assert.deepEqual(all[0].sessions.map(entry=>entry.id),['favorite-old','recent-disabled','old-disabled','enabled-old','unknown-date']);
 });
 
+test('live-only Codex terminals remain visible in all history ranges and keep distinct row identities', () => {
+  const liveA={id:'live-only:a',provider:'codex',cwd:'/work/a',name:'Codex terminal',ephemeral:true,enabled:false};
+  const liveB={id:'live-only:b',provider:'codex',cwd:'/work/a',name:'Codex terminal',ephemeral:true,enabled:false};
+  for (const historyRangeDays of [7,'all']) {
+    const groups=groupedSessions([liveA,liveB],[],true,{workspaceFolders:['/work'],historyRangeDays});
+    assert.deepEqual(groups[0].sessions.map(entry=>entry.id),['live-only:a','live-only:b']);
+  }
+  assert.deepEqual(groupedSessions([liveA,liveB],[],false,{workspaceFolders:['/work']})[0].sessions.map(entry=>entry.id),['live-only:a','live-only:b']);
+});
+
 test('favorites sort before recent leaves; session tree remembers expansion by grouping mode', async () => {
   const now=Date.now();
   const rows=[{...row('recent','/work'),lastActivityAt:now},{...row('favorite','/work'),favorite:true,lastActivityAt:now-100000}];

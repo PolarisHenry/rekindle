@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs/promises');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArguments, normalizeTimestamp } = require('./core');
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
@@ -18,6 +19,8 @@ class SessionManager {
     this.entries = this.readEntries();
     this.pending = new Map();
     this.live = new Map();
+    this.liveOnlyEntries = new Map();
+    this.liveOnlyByTerminal = new WeakMap();
     this.working = new Set();
     this.status = new Map();
     this.hiddenHistory = new Set(context.workspaceState.get('rekindle.hiddenHistory.v1', []));
@@ -44,6 +47,46 @@ class SessionManager {
     const config = this.config();
     if (Array.isArray(entry.sessionArguments)) config[`${entry.provider}Arguments`] = [...entry.sessionArguments];
     return config;
+  }
+
+  upsertLiveOnly(terminal, provider, cwd) {
+    if (!terminal || provider !== 'codex' || !path.isAbsolute(cwd || '')) return undefined;
+    let id = this.liveOnlyByTerminal.get(terminal);
+    let entry = id && this.liveOnlyEntries.get(id);
+    let changed = false;
+    if (!entry) {
+      id = `live-only:${randomUUID()}`;
+      entry = { id, provider, cwd, name: terminal.name || 'Codex terminal', ephemeral: true, enabled: false };
+      this.liveOnlyByTerminal.set(terminal, id);
+      this.liveOnlyEntries.set(id, entry);
+      changed = true;
+    } else if (entry.cwd !== cwd || entry.name !== (terminal.name || 'Codex terminal')) {
+      entry.cwd = cwd;
+      entry.name = terminal.name || 'Codex terminal';
+      changed = true;
+    }
+    this.live.set(id, terminal);
+    if (!this.status.has(id)) {
+      this.status.set(id, { state: 'unknown', reason: 'Codex is running, but its shared daemon has not exposed an exact conversation binding. This live terminal can be focused, but it cannot be auto-restored until an exact session is identified.', updatedAt: Date.now() });
+      changed = true;
+    }
+    if (changed) this.changed(id);
+    return entry;
+  }
+
+  removeLiveOnly(id, refresh = true) {
+    if (!this.liveOnlyEntries.has(id)) return false;
+    this.liveOnlyEntries.delete(id);
+    this.live.delete(id);
+    this.working.delete(id);
+    this.status.delete(id);
+    if (refresh) this.changed(id);
+    return true;
+  }
+
+  removeLiveOnlyForTerminal(terminal, refresh = true) {
+    const id = this.liveOnlyByTerminal.get(terminal);
+    return id ? this.removeLiveOnly(id, refresh) : false;
   }
 
   async save() {
@@ -243,6 +286,16 @@ class SessionManager {
   }
 
   async open(entry, reveal = true, updateActivity = true) {
+    if (entry.ephemeral) {
+      if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before opening agent terminals.');
+      const terminal = this.live.get(entry.id);
+      if (!terminal || terminal.exitStatus !== undefined || !this.vscode.window.terminals.includes(terminal)) {
+        this.removeLiveOnly(entry.id);
+        throw new Error('This live Codex terminal is no longer available.');
+      }
+      if (reveal) terminal.show(false);
+      return terminal;
+    }
     if (entry.unresolved) throw new Error('Cannot identify this terminal in a shared Codex daemon. Restore skipped to avoid opening the wrong conversation.');
     if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before restoring agent sessions.');
     if (!this.entries.some(item => item.id === entry.id)) throw new Error('This session is no longer tracked.');
@@ -365,10 +418,11 @@ class SessionManager {
   }
 
   closed(terminal) {
+    let didChange = this.removeLiveOnlyForTerminal(terminal, false);
     for (const [id, entry] of this.pending) if (entry.terminal === terminal) this.pending.delete(id);
-    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: 'The terminal is closed. The saved session can be opened again.', updatedAt: Date.now() }); }
+    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: 'The terminal is closed. The saved conversation can be opened again.', updatedAt: Date.now() }); didChange = true; }
     // Window shutdown also emits terminal-close events. Never erase saved mappings here.
-    this.changed();
+    if (didChange) this.changed();
   }
 }
 

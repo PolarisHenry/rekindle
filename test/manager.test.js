@@ -63,6 +63,26 @@ test('terminal closure during shutdown does not erase the saved conversation', a
   assert.equal(terminals.length, 1);
 });
 
+test('live-only Codex rows focus the existing terminal without creating or persisting a session', async () => {
+  const { manager, terminals, data } = setup();
+  const terminal = { name: 'Codex · test', show(preserveFocus) { this.shownWith = preserveFocus; }, exitStatus: undefined };
+  terminals.push(terminal);
+  const entry = manager.upsertLiveOnly(terminal, 'codex', os.tmpdir());
+  const opened = await manager.open(entry);
+  assert.equal(opened, terminal);
+  assert.equal(terminal.shownWith, false);
+  assert.equal(terminals.length, 1);
+  assert.equal(manager.entries.length, 0);
+  assert.equal(manager.liveOnlyEntries.size, 1);
+  assert.equal(manager.live.get(entry.id), terminal);
+  assert.equal(entry.sessionId, undefined);
+  assert.deepEqual(data[STORAGE_KEY], []);
+  manager.closed(terminal);
+  assert.equal(manager.liveOnlyEntries.size, 0);
+  assert.equal(manager.live.has(entry.id), false);
+  assert.deepEqual(data[STORAGE_KEY], []);
+});
+
 test('forgetting a mapping does not terminate agents or erase other mappings', async () => {
   const { manager, terminals, data } = setup();
   const a = await manager.add(session('a'), 'A');

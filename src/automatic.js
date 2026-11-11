@@ -52,10 +52,11 @@ function parseOpenFiles(text) {
 // terminal; reports from nested agents must never replace that conversation.
 function terminalAgent(pid, processes) {
   const children = descendants(pid, processes);
-  const agents = processes.filter(row => row.pid !== pid && children.has(row.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(row.command));
+  const agents = processes.filter(row => children.has(row.pid) && /(?:^|\/)(?:pi|codex|claude|agy)$/.test(row.command));
   const byPid = new Map(processes.map(row => [row.pid, row]));
   const agentIds = new Set(agents.map(row => row.pid));
   const roots = agents.filter(row => {
+    if (row.pid !== pid && agentIds.has(pid)) return false;
     const seen = new Set();
     let parent = row.parent;
     while (parent && parent !== pid && !seen.has(parent)) {
@@ -66,14 +67,14 @@ function terminalAgent(pid, processes) {
     return true;
   });
   const providers = new Set(roots.map(root => path.basename(root.command)));
-  if (providers.size !== 1) return { children: new Set(), present: agents.length > 0 };
+  if (providers.size !== 1) return { children: new Set(), present: agents.length > 0, ambiguous: agents.length > 0, rootPids: roots.map(root => root.pid) };
   const provider = [...providers][0];
   const owned = new Set(roots.flatMap(root => [...descendants(root.pid, processes)]));
   // Exclude foreign-agent subtrees, even if they launch the outer provider again.
   for (const agent of agents) if (owned.has(agent.pid) && path.basename(agent.command) !== provider) {
     for (const nested of descendants(agent.pid, processes)) owned.delete(nested);
   }
-  return { provider, children: owned, present: true };
+  return { provider, children: owned, present: true, rootPids: roots.map(root => root.pid) };
 }
 
 function normalizeActivity(value) {
@@ -406,16 +407,28 @@ class AutomaticTracker {
       }
       const agentPids = processes.filter(p => /(?:^|\/)codex$/.test(p.command)).map(p => p.pid);
       let files = [];
+      const codexCwds = new Map();
       if (agentPids.length) {
         try {
           const output = await this.execFile('/usr/sbin/lsof', ['-nP', '-p', agentPids.join(','), '-Fn'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
           files = parseOpenFiles(output.stdout);
         } catch (error) { if (error.stdout) files = parseOpenFiles(error.stdout); }
+        try {
+          const output = await this.execFile('/usr/sbin/lsof', ['-nP', '-a', '-p', agentPids.join(','), '-d', 'cwd', '-Fn'], { timeout: 5000, maxBuffer: 2 * 1024 * 1024 });
+          const byPid = new Map();
+          for (const row of parseOpenFiles(output.stdout)) {
+            if (!path.isAbsolute(row.file)) continue;
+            if (!byPid.has(row.pid)) byPid.set(row.pid, new Set());
+            byPid.get(row.pid).add(row.file);
+          }
+          for (const [cwdPid, paths] of byPid) if (paths.size === 1) codexCwds.set(cwdPid, [...paths][0]);
+        } catch (error) { if (error.stdout) this.log(`Codex working-folder lookup incomplete: ${error.message}`); }
       }
       let dirty = false;
       const workingNow = new Set();
       const activeCodexKeys = new Set();
       const visibleStates = new Map();
+      let liveOnlyChanged = false;
       for (const { terminal, pid } of shells) {
         if (!pid || !this.vscode.window.terminals.includes(terminal)) continue;
         const owner = terminalAgent(pid, processes);
@@ -423,6 +436,7 @@ class AutomaticTracker {
         const managedId = terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID;
         const id = this.terminalIds.get(terminal) || managedId || [...this.manager.live].find(([, live]) => live === terminal)?.[0];
         let entry = id && this.manager.entries.find(row => row.id === id);
+        const liveOnlyEntry = id && this.manager.liveOnlyEntries?.get(id);
         const codexPresent = processes.some(p => children.has(p.pid) && /(?:^|\/)codex$/.test(p.command));
         const pi = [...reports.values()].filter(report => children.has(report.pid) && report.provider === owner.provider);
         const locks = files.filter(item => children.has(item.pid) && /thread-writer-locks\/[0-9a-f-]+\.lock$/.test(item.file));
@@ -449,6 +463,7 @@ class AutomaticTracker {
         if (!session && entry?.provider === 'codex' && boundToEntry && !codexPresent) {
           await this.updateTerminalProgress(terminal, false, pid);
         }
+        let liveOnlyRemoved = false;
         if (session) {
           if (session.provider === 'codex' && session.sessionFile) {
             const lifecycleKey = `codex:${session.sessionId}`;
@@ -460,6 +475,7 @@ class AutomaticTracker {
             session.completedTurns = lifecycle.completions;
             session.activityAt = lifecycle.cursor.activityAt || session.activityAt;
           }
+          liveOnlyRemoved = this.manager.removeLiveOnlyForTerminal?.(terminal, false) === true;
           const observed = this.manager.observe(session, terminal, id);
           entry = observed.entry;
           dirty ||= observed.dirty;
@@ -521,7 +537,15 @@ class AutomaticTracker {
               this.manager.live.delete(entry.id);
             }
           }
+        } else if (liveOnlyEntry || (!entry && owner.provider === 'codex' && codexPresent)) {
+          if (!owner.present || (owner.provider && owner.provider !== 'codex')) {
+            if (liveOnlyEntry) this.manager.removeLiveOnly(liveOnlyEntry.id);
+          } else if (!entry && owner.provider === 'codex' && owner.rootPids?.length === 1) {
+            const cwd = codexCwds.get(owner.rootPids[0]);
+            if (cwd) this.manager.upsertLiveOnly(terminal, 'codex', cwd);
+          }
         }
+        liveOnlyChanged ||= liveOnlyRemoved;
       }
       const liveCodexKeys = new Set(this.manager.entries.filter(entry => entry.provider === 'codex' && terminals.some(terminal => this.manager.live.get(entry.id) === terminal)).map(entry => `codex:${entry.sessionId}`));
       for (const key of this.codexLifecycle.keys()) if (!activeCodexKeys.has(key) && !liveCodexKeys.has(key)) this.codexLifecycle.delete(key);
@@ -535,6 +559,7 @@ class AutomaticTracker {
       this.lastVisibleStates = visibleStates;
       if (dirty) await this.manager.save();
       else if (statusChanges.length) for (const id of statusChanges) this.manager.changed(id);
+      else if (liveOnlyChanged) this.manager.changed();
     } catch (error) { this.log(`Observer: ${error.message}`); }
     finally { this.busy = false; }
   }
