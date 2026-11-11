@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('node:path');
 const vscode = require('vscode');
 const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd, resumeCommand } = require('./core');
 const { SessionManager } = require('./manager');
@@ -9,7 +10,13 @@ const { resolveAddContext, chooseProvider, dispatchAddHere, resolveWorkingDirect
 const { SessionTree } = require('./session-tree');
 const { unusedShell, removeStartupShells } = require('./startup');
 const { importLegacySnapshot, OLD_EXTENSION_ID, BRIDGE_VERSION, compareVersions } = require('./migration');
-const { CONTEXT_KEY: NOTIFICATION_CONTEXT, notificationsEnabled, setNotificationsEnabled } = require('./completion-notifications');
+const {
+  CompletionStatusBar,
+  notificationTargets,
+  setNotificationsEnabled,
+  setCompletionNotificationLocation,
+  updateContext: updateNotificationContext
+} = require('./completion-notifications');
 const { selectSession, showSessionDiagnostics, openCompletedSession } = require('./session-actions');
 
 async function activate(context) {
@@ -41,11 +48,18 @@ async function activate(context) {
   if (migrationResult.status === 'imported' || migrationResult.status === 'recovered-import') log(`Imported ${context.workspaceState.get('agentSessionRestore.sessions.v1', []).length} legacy session record(s).`);
   if (migrationResult.status === 'skipped-existing-data') log('Legacy session import skipped because this extension identity already has session data.');
   const manager = new SessionManager(vscode, context, log, refresh);
-  const syncNotificationContext = () => void vscode.commands.executeCommand('setContext', NOTIFICATION_CONTEXT, notificationsEnabled(vscode));
+  const completionStatusBar = new CompletionStatusBar(vscode);
+  context.subscriptions.push(completionStatusBar);
+  const syncNotificationSettings = () => {
+    completionStatusBar.setAvailable(notificationTargets(vscode).statusBar);
+    void updateNotificationContext(vscode);
+  };
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
-    if (event.affectsConfiguration('agentSessionRestore.completionNotifications')) syncNotificationContext();
+    if (event.affectsConfiguration('agentSessionRestore.completionNotifications')
+      || event.affectsConfiguration('agentSessionRestore.completionNotificationLocation')) syncNotificationSettings();
+    if (event.affectsConfiguration('agentSessionRestore.sessionPulse') || event.affectsConfiguration('workbench.reduceMotion')) sessionTree?.refresh();
   }));
-  syncNotificationContext();
+  syncNotificationSettings();
   const startupShells = new Set(vscode.window.terminals.filter(unusedShell));
   // VS Code may open its default shell after extension activation has begun.
   // Observe the restoration phase, not just the initial terminal snapshot.
@@ -54,7 +68,8 @@ async function activate(context) {
   });
   context.subscriptions.push(startupListener);
   const tracker = new AutomaticTracker(vscode, manager, log, {
-    testMode: context.extensionMode === vscode.ExtensionMode.Test || Boolean(process.env.AGENT_RESTORE_TEST_PHASE)
+    testMode: context.extensionMode === vscode.ExtensionMode.Test || Boolean(process.env.AGENT_RESTORE_TEST_PHASE),
+    completionStatusBar
   });
   context.subscriptions.push(tracker);
   sessionTree = new SessionTree(vscode, manager, context, log);
@@ -134,8 +149,42 @@ async function activate(context) {
   });
   command('addHere', async target => dispatchAddHere(target, (...args) => vscode.commands.executeCommand(...args)));
 
-  command('openCompletedSession', (id, provider, sessionId) => openCompletedSession(manager, id, provider, sessionId));
-  command('open', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen); });
+  command('openCompletedSession', async (id, provider, sessionId) => {
+    const stillTracked = manager.entries.some(entry => entry.id === id && entry.provider === provider && entry.sessionId === sessionId);
+    if (!stillTracked) {
+      completionStatusBar.acknowledgeSession(id, provider, sessionId);
+      return;
+    }
+    const terminal = await openCompletedSession(manager, id, provider, sessionId);
+    if (terminal) completionStatusBar.acknowledgeSession(id, provider, sessionId);
+    return terminal;
+  });
+  command('openCompletionStatus', async () => {
+    const pending = completionStatusBar.getPending();
+    const valid = pending.filter(item => manager.entries.some(entry => entry.id === item.id && entry.provider === item.provider && entry.sessionId === item.sessionId));
+    for (const item of pending) if (!valid.includes(item)) completionStatusBar.acknowledge(item.dedupeKey);
+    if (!valid.length) return;
+    let selected = valid[0];
+    if (valid.length > 1) {
+      const choice = await vscode.window.showQuickPick(valid.map(item => ({
+        label: `${item.provider} · ${item.name}`,
+        description: path.basename(item.cwd || ''),
+        detail: item.cwd,
+        item
+      })), { title: 'Completed Sessions' });
+      selected = choice?.item;
+    }
+    if (!selected) return;
+    const terminal = await openCompletedSession(manager, selected.id, selected.provider, selected.sessionId);
+    if (terminal) completionStatusBar.acknowledgeSession(selected.id, selected.provider, selected.sessionId);
+  });
+  command('clearCompletionStatus', () => completionStatusBar.clear());
+  command('open', async entry => {
+    const chosen = await pickEntry(entry);
+    if (!chosen) return;
+    const terminal = await manager.open(chosen);
+    if (terminal) completionStatusBar.acknowledgeSession(chosen.id, chosen.provider, chosen.sessionId);
+  });
   command('retryRestore', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen, true); });
   command('restore', async () => {
     const failures = await manager.restore();
@@ -245,11 +294,29 @@ async function activate(context) {
   command('launchSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id} Arguments`));
   command('enableCompletionNotifications', async () => {
     await setNotificationsEnabled(vscode, true);
-    await vscode.window.showInformationMessage('Completion notifications enabled.');
+    syncNotificationSettings();
+    vscode.window.setStatusBarMessage?.('Completion reminders enabled', 2500);
   });
   command('disableCompletionNotifications', async () => {
     await setNotificationsEnabled(vscode, false);
-    await vscode.window.showInformationMessage('Completion notifications disabled.');
+    completionStatusBar.clear();
+    completionStatusBar.setAvailable(false);
+    vscode.window.setStatusBarMessage?.('Completion reminders disabled', 2500);
+  });
+  command('completionLocationStatusBar', async () => {
+    await setCompletionNotificationLocation(vscode, 'statusBar');
+    syncNotificationSettings();
+    vscode.window.setStatusBarMessage?.('Completion reminders: Status Bar', 2500);
+  });
+  command('completionLocationNative', async () => {
+    await setCompletionNotificationLocation(vscode, 'native');
+    syncNotificationSettings();
+    vscode.window.setStatusBarMessage?.('Completion reminders: Native Notification', 2500);
+  });
+  command('completionLocationBoth', async () => {
+    await setCompletionNotificationLocation(vscode, 'both');
+    syncNotificationSettings();
+    vscode.window.setStatusBarMessage?.('Completion reminders: Both', 2500);
   });
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {

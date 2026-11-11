@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0
+
+- Add persistent, clickable completion reminders to the status bar by default; optionally use native notifications or both, and clear pending reminders when disabled or opened.
+- Keep native completion toasts compact and link-first; VS Code's close button still dismisses the toast without opening its session.
+- Add a configurable pulse for working sessions, respecting the explicit workbench reduced-motion setting.
+
 ## 0.10.4
 
 - Place Open Session first in a compact completion notification, keeping it clear of hover controls and truncation.

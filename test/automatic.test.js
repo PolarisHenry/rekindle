@@ -59,7 +59,7 @@ test('restored AGY waits for lifecycle without a false restore error and recover
  assert.equal(fx.messages.length,1);
 });
 
-async function codexSampleFixture(t, notifications = true, initialEvents = []) {
+async function codexSampleFixture(t, notifications = true, initialEvents = [], location = 'native') {
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'rekindle-completion-sample-'));
  t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  const registry=path.join(dir,'registry');
@@ -71,17 +71,20 @@ async function codexSampleFixture(t, notifications = true, initialEvents = []) {
  const terminal={processId:Promise.resolve(100),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:entry.id}},show(preserve){this.shownWith=preserve;}};
  const messages=[],progress=[]; const opens=[];
  const vscode={
-  workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>key==='completionNotifications'?notifications:fallback})},
+  workspace:{isTrusted:true,getConfiguration:()=>({get:(key,fallback)=>key==='completionNotifications'?notifications:key==='completionNotificationLocation'?location:fallback})},
   window:{terminals:[terminal],showInformationMessage:(message,...actions)=>{assert.deepEqual(actions,[],'completion must not use a dismissing notification button');messages.push(message);return Promise.resolve(undefined);}}
  };
  const manager={entries:[entry],live:new Map([[entry.id,terminal]]),working:new Set(),status:new Map(),changed(){},save:async()=>{},open:async(current)=>{opens.push(current.id); const target=manager.live.get(current.id); return target;}};
+ const statusItems=[];
+ const statusBar={add:(current,dedupeKey)=>statusItems.push({id:current.id,dedupeKey})};
  manager.observe=session=>({entry:manager.entries.find(row=>row.sessionId===session.sessionId)||entry,dirty:false});
  const tracker=new AutomaticTracker(vscode,manager,()=>{}, {
   registry,
   execFile:async command=>command==='ps'?{stdout:'100 1 /bin/zsh\n101 100 /usr/local/bin/codex\n'}:{stdout:''},
-  writeTerminalProgress:async(_terminal,working)=>{progress.push(working);return true;}
+  writeTerminalProgress:async(_terminal,working)=>{progress.push(working);return true;},
+  completionStatusBar:statusBar
  });
- return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens};
+ return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens,statusItems};
 }
 
 async function appendCodexEvent(file,payload,timestamp=Date.now()) {
@@ -157,6 +160,34 @@ test('turn tracking clears Working when notifications are disabled',async t=>{
  await fx.tracker.sample();
  assert.equal(fx.manager.working.has(fx.entry.id),false);
  assert.deepEqual(fx.messages,[]);
+});
+
+test('completion observer routes persistent status bar, native toast, and both without duplicate sessions',async t=>{
+ const fx=await codexSampleFixture(t,true,[],'statusBar');
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'status-turn-1'});
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'status-turn-1',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.equal(fx.statusItems.length,1);
+ assert.deepEqual(fx.messages,[],'statusBar default route does not emit a dismissible native toast');
+
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'status-turn-2'});
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'status-turn-2',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.equal(fx.statusItems.length,2,'each completed token reaches the status bar adapter');
+
+ fx.vscode.workspace.getConfiguration=()=>({get:(key,fallback)=>key==='completionNotifications'?true:key==='completionNotificationLocation'?'both':fallback});
+ await appendCodexEvent(fx.sessionFile,{type:'task_started',turn_attribution:{kind:'user'},turn_id:'both-turn'});
+ await fx.tracker.sample();
+ await appendCodexEvent(fx.sessionFile,{type:'task_complete',turn_id:'both-turn',completed_at:Math.ceil(Date.now()/1000)});
+ await fx.tracker.sample();
+ assert.equal(fx.messages.length,1,'both route also shows the native toast');
+ assert.equal(fx.statusItems.length,3,'both route also queues status bar reminder');
+ await fx.tracker.sample();
+ assert.equal(fx.messages.length,1);
+ assert.equal(fx.statusItems.length,3,'repeated idle samples never duplicate a notification token');
 });
 
 test('Codex completion toasts stay bound to each session when two agents finish separately',async t=>{

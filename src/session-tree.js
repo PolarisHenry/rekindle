@@ -266,7 +266,7 @@ class SessionTree {
     const statusText = working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';
     item.description = [node.favorite ? '★ Favorite' : '', node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', statusText].filter(Boolean).join(' · ');
     item.tooltip = `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}${status?.reason ? `\n${status.reason}` : ''}\nClick to open.`;
-    item.iconPath = sessionIcon(v, node.provider);
+    item.iconPath = sessionIcon(v, node.provider, working, v.workspace?.getConfiguration('agentSessionRestore').get('sessionPulse', true) !== false && v.workspace?.getConfiguration('workbench').get('reduceMotion') !== 'on');
     item.contextValue = `${node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession'}${node.favorite ? 'Favorite' : ''}${status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Failed' : ''}`;
     item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
     return item;

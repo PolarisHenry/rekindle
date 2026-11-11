@@ -15,7 +15,11 @@ const SESSION_COLORS = {
   agy: 'terminal.ansiYellow'
 };
 
-function sessionIcon(vscode, provider) {
+function sessionIcon(vscode, provider, working = false, pulse = true) {
+  if (working && pulse) {
+    const name = Object.hasOwn(SESSION_COLORS, provider) ? provider : 'default';
+    return vscode.Uri.file(path.join(__dirname, '..', 'media', 'pulse', `${name}.svg`));
+  }
   const color = SESSION_COLORS[provider] || 'terminal.ansiBrightWhite';
   return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(color));
 }

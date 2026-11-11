@@ -224,3 +224,23 @@ test('context menus cover favorite suffixes and use supported when-clause operat
   assert.equal(menus.some(item=>/!~|!=~/.test(item.when)),false);
   assert.ok(manifest.contributes.menus['rekindle.historyRange'].some(item=>item.command==='agentSessionRestore.historyRangeCustom'));
 });
+
+test('working session dots breathe while idle and disabled-animation dots remain static', () => {
+ const v={ThemeIcon:class{constructor(id,color){this.id=id;this.color=color;}},ThemeColor:class{constructor(id){this.id=id;}},Uri:{file:fsPath=>({fsPath})}};
+ for(const provider of ['codex','pi','claude','agy']){
+  assert.ok(sessionIcon(v,provider,true).fsPath.endsWith(`/media/pulse/${provider}.svg`));
+  assert.equal(sessionIcon(v,provider,false).id,'circle-filled');
+  assert.equal(sessionIcon(v,provider,true,false).id,'circle-filled');
+ }
+ assert.ok(sessionIcon(v,'unsupported',true).fsPath.endsWith('/media/pulse/default.svg'));
+});
+
+test('working leaf stops pulsing immediately when motion or sessionPulse is disabled', () => {
+ let pulse=true, reduced='off';
+ const v={TreeItem:class{constructor(label,state){this.label=label;}},TreeItemCollapsibleState:{None:0},ThemeIcon:class{constructor(id){this.id=id;}},ThemeColor:class{},Uri:{file:fsPath=>({fsPath})},window:{terminals:[]},workspace:{getConfiguration:section=>({get:(key,fallback)=>section==='workbench'?reduced:pulse})}};
+ const tree={vscode:v,manager:{live:new Map(),working:new Set(['a'])}};
+ const entry=row('a','/work');
+ assert.ok(SessionTree.prototype.getTreeItem.call(tree,entry).iconPath.fsPath.endsWith('/pulse/pi.svg'));
+ reduced='on';assert.equal(SessionTree.prototype.getTreeItem.call(tree,entry).iconPath.id,'circle-filled');
+ reduced='off';pulse=false;assert.equal(SessionTree.prototype.getTreeItem.call(tree,entry).iconPath.id,'circle-filled');
+});

@@ -6,6 +6,7 @@ const { promisify } = require('node:util');
 const execFile = promisify(require('node:child_process').execFile);
 const { installAgentBridges } = require('./bridges');
 const { writeTerminalProgress } = require('./terminal-progress');
+const { notificationTargets } = require('./completion-notifications');
 
 const registry = path.join(os.homedir(), '.local/state/vscode-agent-session-restore/pi');
 
@@ -370,6 +371,7 @@ class AutomaticTracker {
     this.installPi = options.installPiBridge || installPiBridge;
     this.installAgents = options.installAgentBridges || installAgentBridges;
     this.writeProgress = options.writeTerminalProgress || writeTerminalProgress;
+    this.completionStatusBar = options.completionStatusBar;
     this.execFile = options.execFile || execFile;
     this.registry = options.registry || registry;
     this.readLifecycle = options.readCodexLifecycle || readCodexLifecycle;
@@ -545,6 +547,9 @@ class AutomaticTracker {
     if (this.notifiedCompletionKeys.has(dedupeKey)) return;
     this.notifiedCompletionKeys.add(dedupeKey);
     this.boundSet(this.notifiedCompletionKeys, 2048);
+    const targets = notificationTargets(this.vscode);
+    if (targets.statusBar) this.completionStatusBar?.add(entry, dedupeKey);
+    if (!targets.native) return;
     const pathName = path.basename(entry.cwd || '') || entry.cwd || 'unknown folder';
     const providerName = ({ codex:'Codex', pi:'pi', claude:'Claude', agy:'AGY' })[entry.provider] || entry.provider;
     // Native notification buttons close the toast and can restore focus to the

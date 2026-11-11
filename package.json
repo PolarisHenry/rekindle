@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -266,6 +266,34 @@
         "title": "Retry Restore",
         "icon": "$(debug-restart)",
         "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.openCompletionStatus",
+        "title": "Open Completed Sessions",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.clearCompletionStatus",
+        "title": "Clear Status Bar Reminders",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.completionLocationStatusBar",
+        "title": "Use Status Bar Reminders",
+        "category": "Rekindle",
+        "enablement": "rekindle.completionNotificationLocation != statusBar"
+      },
+      {
+        "command": "agentSessionRestore.completionLocationNative",
+        "title": "Use Native Notifications",
+        "category": "Rekindle",
+        "enablement": "rekindle.completionNotificationLocation != native"
+      },
+      {
+        "command": "agentSessionRestore.completionLocationBoth",
+        "title": "Use Both Reminder Locations",
+        "category": "Rekindle",
+        "enablement": "rekindle.completionNotificationLocation != both"
       }
     ],
     "viewsContainers": {
@@ -373,6 +401,16 @@
           "command": "agentSessionRestore.resetHiddenHistory",
           "when": "view == agentSessionRestore.sessions && rekindle.hasHiddenHistory",
           "group": "1_view@5"
+        },
+        {
+          "submenu": "rekindle.completionLocation",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "3_settings@3"
+        },
+        {
+          "command": "agentSessionRestore.clearCompletionStatus",
+          "when": "view == agentSessionRestore.sessions && rekindle.hasPendingCompletion",
+          "group": "3_settings@4"
         }
       ],
       "view/item/context": [
@@ -503,6 +541,20 @@
           "command": "agentSessionRestore.historyRangeCustom",
           "group": "1_range@7"
         }
+      ],
+      "rekindle.completionLocation": [
+        {
+          "command": "agentSessionRestore.completionLocationStatusBar",
+          "group": "1_location@1"
+        },
+        {
+          "command": "agentSessionRestore.completionLocationNative",
+          "group": "1_location@2"
+        },
+        {
+          "command": "agentSessionRestore.completionLocationBoth",
+          "group": "1_location@3"
+        }
       ]
     },
     "configuration": {
@@ -516,7 +568,7 @@
         "agentSessionRestore.completionNotifications": {
           "type": "boolean",
           "default": true,
-          "description": "Show a non-focusing VS Code notification when a supported agent finishes working. Enabled by default; turn off from the Sessions view menu or set false."
+          "description": "Master switch for completion reminders in any location. Enabled by default; turn off from the Sessions view menu or set false."
         },
         "agentSessionRestore.codexCommand": {
           "type": "string",
@@ -616,6 +668,28 @@
           "default": 30,
           "scope": "window",
           "description": "Initial History Range in days when this workspace has no saved Sessions view choice. The Sessions → … → History Range menu stores later selections per workspace."
+        },
+        "agentSessionRestore.completionNotificationLocation": {
+          "type": "string",
+          "enum": [
+            "statusBar",
+            "native",
+            "both"
+          ],
+          "enumDescriptions": [
+            "Show persistent clickable reminders in the status bar (default).",
+            "Show the compact native VS Code toast.",
+            "Show both the status bar reminder and native toast."
+          ],
+          "default": "statusBar",
+          "scope": "window",
+          "description": "Where to show completed-session reminders. The existing completionNotifications setting disables all reminder locations."
+        },
+        "agentSessionRestore.sessionPulse": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Animate the provider dot for a session while it is working. Set false to disable the pulse."
         }
       }
     },
@@ -631,6 +705,10 @@
       {
         "id": "rekindle.historyRange",
         "label": "History Range"
+      },
+      {
+        "id": "rekindle.completionLocation",
+        "label": "Completion Reminder Location"
       }
     ]
   },
