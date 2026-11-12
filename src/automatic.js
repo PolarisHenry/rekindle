@@ -268,10 +268,10 @@ async function readCodexThreadHeader(file) {
     if (start < 0 || text[start] !== '{') return undefined;
     // Codex headers can carry very large instruction payloads on the first line,
     // so parse incrementally instead of JSON.parse-ing the whole line.
-    const row = readCodexMetadataObject(text, start, new Set(['type']), ['id', 'cwd', 'parent_thread_id'])?.value;
+    const row = readCodexMetadataObject(text, start, new Set(['type']), ['id', 'cwd', 'parent_thread_id', 'thread_source'])?.value;
     const meta = row?.type === 'session_meta' ? row.payload : undefined;
     if (!meta?.id || !path.isAbsolute(meta.cwd || '')) return undefined;
-    return { id: meta.id, cwd: meta.cwd, ...(meta.parent_thread_id ? { parentThreadId: meta.parent_thread_id } : {}) };
+    return { id: meta.id, cwd: meta.cwd, ...(meta.parent_thread_id ? { parentThreadId: meta.parent_thread_id } : {}), ...(meta.thread_source === 'subagent' ? { subagent: true } : {}) };
   } catch { return undefined; }
   finally { await handle?.close().catch(() => {}); }
 }
@@ -281,7 +281,7 @@ async function readCodexLockSession(sessionId, files) {
   if (!rollout) return undefined;
   const meta = await readCodexThreadHeader(rollout.file);
   if (!meta || meta.id !== sessionId) return undefined;
-  return { provider: 'codex', sessionId, sessionFile: rollout.file, cwd: meta.cwd, ...(meta.parentThreadId ? { parentThreadId: meta.parentThreadId } : {}) };
+  return { provider: 'codex', sessionId, sessionFile: rollout.file, cwd: meta.cwd, ...(meta.parentThreadId ? { parentThreadId: meta.parentThreadId } : {}), ...(meta.subagent ? { subagent: true } : {}) };
 }
 
 // Codex 0.167+ delegates thread writing to a shared app-server daemon that is
@@ -298,7 +298,7 @@ async function resolveSharedCodexSession(files, cwd, exclude) {
   for (const sessionId of lockIds) {
     if (exclude?.has(sessionId)) continue;
     const session = await readCodexLockSession(sessionId, files);
-    if (!session || session.parentThreadId) continue; // Subagent threads never own a terminal.
+    if (!session || session.parentThreadId || session.subagent) continue; // Subagent threads never own a terminal.
     if (path.resolve(session.cwd) !== path.resolve(cwd)) continue;
     if (match) return undefined; // Two live conversations share this folder: never guess.
     match = { provider: 'codex', sessionId, sessionFile: session.sessionFile, cwd: session.cwd };
@@ -308,24 +308,9 @@ async function resolveSharedCodexSession(files, cwd, exclude) {
 
 async function readManagedCodexSession(entry, managedId, codexPresent) {
   if (!codexPresent || !entry || managedId !== entry.id || entry.provider !== 'codex' || !entry.sessionId || !path.isAbsolute(entry.sessionFile || '')) return undefined;
-  let handle;
-  try {
-    const stat = await fs.stat(entry.sessionFile);
-    if (!stat.isFile()) return undefined;
-    handle = await fs.open(entry.sessionFile, 'r');
-    const buffer = Buffer.alloc(65536);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
-    if (newline < 0) return undefined;
-    const header = JSON.parse(buffer.subarray(0, newline).toString('utf8'));
-    const meta = header?.type === 'session_meta' ? header.payload : undefined;
-    if (meta?.id !== entry.sessionId || !path.isAbsolute(meta.cwd || '') || (entry.cwd && path.resolve(meta.cwd) !== path.resolve(entry.cwd))) return undefined;
-    return { provider: 'codex', sessionId: entry.sessionId, sessionFile: entry.sessionFile, cwd: meta.cwd };
-  } catch {
-    return undefined;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
+  const meta = await readCodexThreadHeader(entry.sessionFile);
+  if (meta?.id !== entry.sessionId || (entry.cwd && path.resolve(meta.cwd) !== path.resolve(entry.cwd))) return undefined;
+  return { provider: 'codex', sessionId: entry.sessionId, sessionFile: entry.sessionFile, cwd: meta.cwd };
 }
 
 function consumeCompletion(key, completedAt, seen, startedAt = Infinity) {
@@ -433,6 +418,7 @@ class AutomaticTracker {
     this.terminalIds = new WeakMap();
     this.missing = new Map();
     this.codexLifecycle = new Map();
+    this.codexLocksByTerminal = new WeakMap();
     this.notifiedCodexTurns = new Set();
     this.notifiedCompletionKeys = new Set();
     this.completionsSeen = new Map();
@@ -492,9 +478,22 @@ class AutomaticTracker {
         const pi = [...reports.values()].filter(report => children.has(report.pid) && report.provider === owner.provider);
         const locks = files.filter(item => children.has(item.pid) && /thread-writer-locks\/[0-9a-f-]+\.lock$/.test(item.file));
         const ids = [...new Set(locks.map(item => path.basename(item.file, '.lock')))];
+        const previousLocks = this.codexLocksByTerminal.get(terminal);
         let session;
         if (pi.length === 1) session = pi[0];
-        else if (ids.length === 1) session = await readCodexLockSession(ids[0], files);
+        else if (owner.provider === 'codex' && ids.length) {
+          const candidates = (await Promise.all(ids.map(lockId => readCodexLockSession(lockId, files))))
+            .filter(candidate => candidate && !candidate.parentThreadId && !candidate.subagent);
+          this.codexLocksByTerminal.set(terminal, new Set(candidates.map(candidate => candidate.sessionId)));
+          if (candidates.length === 1) session = candidates[0];
+          else if (previousLocks) {
+            // A dedicated server can retain the old conversation's writer lock
+            // after /new. Follow a single new main-thread lock in THIS terminal's
+            // process tree, never a globally recent thread or another terminal.
+            const added = candidates.filter(candidate => !previousLocks.has(candidate.sessionId));
+            if (added.length === 1) session = added[0];
+          }
+        }
         const boundToEntry = Boolean(entry && (managedId === entry.id || this.terminalIds.get(terminal) === entry.id || this.manager.live.get(entry.id) === terminal));
         if (!session && entry?.provider === 'codex' && boundToEntry && codexPresent) {
           session = await readManagedCodexSession(entry, entry.id, codexPresent);
@@ -647,7 +646,9 @@ class AutomaticTracker {
       }
       return;
     }
-    if (wasWorking === working) return;
+    // The CLI can reset OSC progress while repainting its own status. Reassert
+    // an active task on each sample; idle remains a one-time transition.
+    if (wasWorking === working && !working) return;
     if (!working) {
       if (await this.writeProgress(terminal, false, { platform: this.platform, terminals: this.vscode.window.terminals })) this.terminalProgress.set(terminal, false);
       return;

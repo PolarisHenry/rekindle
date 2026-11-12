@@ -7,6 +7,7 @@ const { sessionKey, launchOptions, resumeCommand, newSessionCommand, startupArgu
 const { createAgentTerminal, ShellGate } = require('./python-terminal');
 const { retireIdleTerminal } = require('./startup');
 const { agentIcon } = require('./agent-icons');
+const { dedicatedCodexConfig } = require('./codex-launch');
 const { piSessionsRoot, resolvePiSessionFile } = require('./pi-session');
 const STORAGE_KEY = 'agentSessionRestore.sessions.v1';
 
@@ -47,6 +48,12 @@ class SessionManager {
     const config = this.config();
     if (Array.isArray(entry.sessionArguments)) config[`${entry.provider}Arguments`] = [...entry.sessionArguments];
     return config;
+  }
+
+  async launchConfig(entry) {
+    const config = this.configFor(entry);
+    config.codexDedicatedProcess = this.vscode.workspace.getConfiguration('agentSessionRestore').get('codexDedicatedProcess');
+    return entry.provider === 'codex' ? dedicatedCodexConfig(config) : config;
   }
 
   upsertLiveOnly(terminal, provider, cwd) {
@@ -206,27 +213,39 @@ class SessionManager {
   observe(session, terminal, previousId) {
     let entry = this.entries.find(row => row.id === previousId);
     let dirty = false;
+    let inherited;
     if (entry && sessionKey(entry) !== sessionKey(session)) {
+      if (entry.provider === session.provider) inherited = {
+        name: entry.name, customName: entry.customName === true,
+        enabled: entry.enabled !== false, favorite: entry.favorite === true,
+        ...(entry.sessionArguments !== undefined ? { sessionArguments: [...entry.sessionArguments] } : {})
+      };
       entry.enabled = false;
       entry.archived = true;
       this.live.delete(entry.id);
+      this.working.delete(entry.id);
       entry = undefined;
       dirty = true;
     }
     if (!entry) entry = this.entries.find(row => sessionKey(row) === sessionKey(session));
     if (!entry) {
       const pending = this.pending.get(previousId);
+      const preferences = pending || inherited;
       entry = {
         id: pending ? previousId : randomUUID(),
-        ...(pending ? { name: pending.name, customName: pending.customName === true } : {}),
+        ...(preferences ? { name: preferences.name, customName: preferences.customName === true } : {}),
         provider: session.provider, sessionId: session.sessionId, sessionFile: session.sessionFile,
-        cwd: session.cwd, enabled: pending?.enabled ?? true,
-        favorite: pending?.favorite === true,
-        ...(pending?.sessionArguments !== undefined ? { sessionArguments: [...pending.sessionArguments] } : {}),
+        cwd: session.cwd, enabled: preferences?.enabled ?? true,
+        favorite: preferences?.favorite === true,
+        ...(preferences?.sessionArguments !== undefined ? { sessionArguments: [...preferences.sessionArguments] } : {}),
         lastActivityAt: normalizeTimestamp(session.lastActivityAt ?? session.updatedAt) || undefined,
         createdAt: pending?.createdAt || new Date().toISOString()
       };
       this.entries.push(entry);
+      dirty = true;
+    }
+    if (inherited) {
+      Object.assign(entry, inherited, { archived: false });
       dirty = true;
     }
     this.pending.delete(previousId);
@@ -241,8 +260,7 @@ class SessionManager {
   async create(session, name) {
     if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before starting agents.');
     const entry = { ...session, id: randomUUID(), name, customName: true };
-    const config = this.config();
-    if (Array.isArray(session.sessionArguments)) config[`${entry.provider}Arguments`] = [...session.sessionArguments];
+    const config = await this.launchConfig(entry);
     const command = newSessionCommand(entry.provider, config);
     const stat = await fs.stat(entry.cwd).catch(() => null);
     if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
@@ -283,7 +301,7 @@ class SessionManager {
     const pythonInstalled = this.vscode.extensions?.getExtension('ms-python.python') || this.vscode.extensions?.getExtension('ms-python.vscode-python-envs');
     await this.shellGate.wait(terminal, { grace: pythonInstalled ? 1000 : 0 });
     if (!this.vscode.window.terminals.includes(terminal)) return;
-    const command = startupCommand || resumeCommand(entry, this.configFor(entry));
+    const command = startupCommand || resumeCommand(entry, await this.launchConfig(entry));
     if (terminal.shellIntegration) terminal.shellIntegration.executeCommand(command);
     else terminal.sendText(command, true);
   }
@@ -346,7 +364,7 @@ class SessionManager {
       }
       let terminal;
       try {
-        terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, this.configFor(entry)), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
+        terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, await this.launchConfig(entry)), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
         this.live.set(entry.id, terminal);
         this.status.set(entry.id, { state: 'unknown', reason: 'Waiting for the agent session binding to be identified.', updatedAt: Date.now() });
         await this.startInShell(terminal, entry);

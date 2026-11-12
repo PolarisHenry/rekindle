@@ -103,6 +103,65 @@ async function codexSampleFixture(t, notifications = true, initialEvents = [], l
  return {dir,sessionFile,entry,terminal,vscode,manager,tracker,messages,progress,opens,statusItems};
 }
 
+test('a restored and a fresh dedicated Codex in one folder bind separately and finish independently', async t => {
+ const fx=await codexSampleFixture(t,false);
+ const {SessionManager}=require('../src/manager');
+ const first='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', second='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+ fx.entry.sessionId=first;
+ fx.entry.sessionFile=path.join(fx.dir,`rollout-${first}.jsonl`);
+ const secondFile=path.join(fx.dir,`rollout-${second}.jsonl`);
+ const event=(type,turn)=>JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type,turn_id:turn}})+'\n';
+ await fs.writeFile(fx.entry.sessionFile,JSON.stringify({type:'session_meta',payload:{id:first,cwd:fx.dir,instructions:'x'.repeat(100000)}})+'\n'+event('task_started','one'));
+ await fs.writeFile(secondFile,JSON.stringify({type:'session_meta',payload:{id:second,cwd:fx.dir}})+'\n'+event('task_started','two')+event('task_complete','two'));
+ assert.equal((await readManagedCodexSession(fx.entry,fx.entry.id,true))?.sessionId,first,'restored binding accepts a header larger than 64 KB without reading instructions');
+ const fresh={processId:Promise.resolve(200),creationOptions:{env:{AGENT_SESSION_RESTORE_ID:'pending-id'}}};
+ fx.vscode.window.terminals.push(fresh);
+ fx.manager.pending=new Map([['pending-id',{id:'pending-id',provider:'codex',cwd:fx.dir,name:'Fresh',customName:true,terminal:fresh}]]);
+ fx.manager.observe=SessionManager.prototype.observe.bind(fx.manager);
+ fx.tracker.execFile=async command=>({stdout:command==='ps'?'100 1 zsh\n101 100 codex\n200 1 zsh\n201 200 codex\n':`p101\nn/tmp/thread-writer-locks/${first}.lock\nn${fx.entry.sessionFile}\np201\nn/tmp/thread-writer-locks/${second}.lock\nn${secondFile}\n`});
+ await fx.tracker.sample();
+ assert.equal(fx.manager.pending.size,0,'fresh Starting row is replaced by its actual conversation');
+ assert.equal(fx.manager.entries.length,2);
+ assert.equal(fx.manager.working.has(fx.entry.id),true);
+ assert.equal(fx.manager.status.get('pending-id').state,'open','completed fresh session does not keep spinning');
+ assert.equal(fx.manager.live.get('pending-id'),fresh);
+ await fs.appendFile(fx.entry.sessionFile,event('task_complete','one'));
+ await fs.appendFile(secondFile,event('task_started','three'));
+ await fx.tracker.sample();
+ assert.equal(fx.manager.working.has(fx.entry.id),false);
+ assert.equal(fx.manager.working.has('pending-id'),true);
+ assert.equal(fx.manager.live.get(fx.entry.id),fx.terminal);
+});
+
+test('Codex /new follows a newly persisted main lock even when the server retains old and subagent locks', async t => {
+ const fx=await codexSampleFixture(t,false);
+ const {SessionManager}=require('../src/manager');
+ const old='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', next='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', child='cccccccc-cccc-cccc-cccc-cccccccccccc';
+ const file=id=>path.join(fx.dir,`rollout-${id}.jsonl`);
+ const header=id=>JSON.stringify({type:'session_meta',payload:{id,cwd:fx.dir}})+'\n';
+ fx.entry.sessionId=old; fx.entry.sessionFile=file(old); fx.entry.customName=true;
+ await fs.writeFile(file(old),header(old));
+ fx.manager.pending=new Map();
+ fx.manager.observe=SessionManager.prototype.observe.bind(fx.manager);
+ let ids=[old];
+ fx.tracker.execFile=async command=>({stdout:command==='ps'?'100 1 zsh\n101 100 codex\n':`p101\n`+ids.map(id=>`n/tmp/thread-writer-locks/${id}.lock\nn${file(id)}\n`).join('')});
+ await fx.tracker.sample();
+ ids=[old,next,child];
+ await fs.writeFile(file(child),JSON.stringify({type:'session_meta',payload:{id:child,cwd:fx.dir,thread_source:'subagent',instructions:'x'.repeat(100000),parent_thread_id:old}})+'\n');
+ await fx.tracker.sample();
+ assert.equal(fx.manager.entries.length,1,'wait for the new header; never choose the subagent');
+ await fs.writeFile(file(next),header(next));
+ await fx.tracker.sample();
+ assert.equal(fx.entry.archived,true);
+ const current=fx.manager.entries.find(entry=>entry.sessionId===next);
+ assert.ok(current);
+ assert.equal(current.name,fx.entry.name);
+ assert.equal(current.enabled,true);
+ await fx.tracker.sample();
+ assert.equal(fx.manager.live.get(current.id),fx.terminal,'the new exact binding remains stable with both locks held');
+ assert.equal(fx.manager.entries.length,2);
+});
+
 test('unbound shared-daemon Codex appears as a stable transient row, binds cleanly, and never persists a fake ID',async t=>{
  const fx=await codexSampleFixture(t);
  const {terminal,manager,tracker,dir}=fx;
@@ -676,7 +735,7 @@ test('tracked task state reaches only its terminal tty and close clears the mapp
  await tracker.updateTerminalProgress(terminal,true,321);
  await tracker.updateTerminalProgress(terminal,true,321);
  await tracker.updateTerminalProgress(terminal,false,321);
- assert.deepEqual(transitions.map(row=>row.working),[true,false],'repeated samples do not rewrite progress');
+ assert.deepEqual(transitions.map(row=>row.working),[true,true,false],'active progress is reasserted after CLI repaint; idle is cleared');
  await tracker.updateTerminalProgress(terminal,true,321);
  tracker.closed(terminal);
  assert.equal(tracker.terminalProgress.has(terminal),false,'closed terminal state is discarded');

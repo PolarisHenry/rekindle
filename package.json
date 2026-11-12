@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.11.10",
+  "version": "0.11.12",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -712,6 +712,11 @@
           "default": true,
           "scope": "window",
           "description": "Animate the provider dot for a session while it is working. Set false to disable the pulse."
+        },
+        "agentSessionRestore.codexDedicatedProcess": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use a dedicated Codex process for each terminal when the CLI supports it. Improves exact session tracking when multiple Codex terminals share a folder. Takes effect on the next agent launch."
         }
       }
     },

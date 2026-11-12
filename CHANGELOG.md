@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.12
+
+- Follow a new Codex conversation in the same dedicated terminal even when the server retains older conversation locks. Wait for persisted metadata and exclude subagent threads.
+- Carry terminal names, restore preferences, favorites and launch arguments across detected conversation changes; keep previous conversations in history with restoration disabled.
+- Restore the most recently bound conversation after restart. Commands that keep the same conversation ID keep the existing record.
+
+## 0.11.11
+
+- Use a dedicated Codex process for plugin-created and restored terminals when the installed CLI supports `--no-daemon`, preventing shared-daemon ambiguity between conversations in the same folder. Preserve configured arguments and remote connections; older CLIs keep their existing launch behavior.
+- Read exact saved Codex bindings even when rollout headers exceed 64 KB.
+- Reassert active terminal progress after CLI repaints, while keeping idle progress cleared.
+
 ## 0.11.10
 
 - Add Expand All and Collapse All actions to Sessions.

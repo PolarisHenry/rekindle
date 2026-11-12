@@ -198,6 +198,30 @@ test('switching conversations archives the old session instead of overwriting it
   assert.equal(manager.entries.length, 2);
 });
 
+test('conversation switches preserve terminal preferences and restart restores only the new exact ID', async () => {
+  for (const enabled of [true, false]) {
+    const { manager, context, vscode } = setup();
+    const old = await manager.add(session('old'), 'My terminal', enabled);
+    Object.assign(old, { favorite: true, sessionArguments: ['--yolo'] });
+    const terminal = { name: 'My terminal' };
+    manager.live.set(old.id, terminal);
+    manager.working.add(old.id);
+    const next = manager.observe(session('new'), terminal, old.id).entry;
+    await manager.save();
+    assert.equal(next.name, 'My terminal');
+    assert.equal(next.enabled, enabled);
+    assert.equal(next.favorite, true);
+    assert.deepEqual(next.sessionArguments, ['--yolo']);
+    assert.equal(manager.working.has(old.id), false);
+    assert.equal(old.archived, true);
+    const restarted = new SessionManager(vscode, context, () => {}, () => {});
+    assert.deepEqual(restarted.entries.filter(entry => entry.enabled).map(entry => entry.sessionId), enabled ? ['new'] : []);
+    const same = manager.observe(session('new'), terminal, next.id).entry;
+    assert.equal(same.id, next.id, 'a clear command that does not change ID does not create another record');
+    assert.equal(manager.entries.length, 2);
+  }
+});
+
 test('restoration reads per-agent arguments from VS Code settings', async () => {
   const { manager, vscode } = setup();
   const config = { codexArguments: ['--yolo'], agyArguments: ['--dangerously-skip-permissions'] };
