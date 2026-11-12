@@ -32,6 +32,23 @@ exports.run = async function () {
   const api = await extension.activate();
   await api.ready;
   const manager = api.manager;
+  if (phase === 'grouped-restore') {
+    for (const entry of [...manager.entries]) await manager.remove(entry.id);
+    for (const terminal of [...vscode.window.terminals]) terminal.dispose();
+    await until(() => vscode.window.terminals.length === 0);
+    const cwd = path.join(data, 'workspace');
+    for (const [index, provider] of ['agy', 'codex', 'pi', 'claude', 'codex'].entries()) {
+      await manager.add({ provider, sessionId: provider === 'pi' ? 'pi-exact-id' : `grouped-${index}`, cwd,
+        ...(provider === 'pi' ? { sessionFile: path.join(data, 'pi-session.jsonl') } : {}) }, `Grouped ${provider} ${index}`);
+    }
+    assert.deepEqual(await manager.restore(), []);
+    const managed = vscode.window.terminals.filter(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID);
+    assert.deepEqual(managed.map(terminal => terminal.name), ['Grouped pi 2', 'Grouped codex 1', 'Grouped codex 4', 'Grouped claude 3', 'Grouped agy 0']);
+    assert.equal(vscode.window.activeTerminal, managed[0]);
+    await manager.restore();
+    assert.equal(vscode.window.terminals.filter(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID).length, 5);
+    return;
+  }
   if (['migration-import', 'migration-reopen'].includes(phase)) {
     assert.equal(api.blocked, undefined, 'new identity was not blocked by the passive bridge');
     assert.equal(manager.entries.length, 2, `legacy records imported exactly once (migration=${api.migration?.status}, installed=${Boolean(vscode.extensions.getExtension('local-tools.agent-session-restore'))}, extensions=${vscode.extensions.all.map(item => item.id).filter(id => /local-tools|ArionLee/i.test(id)).join(',')})`);

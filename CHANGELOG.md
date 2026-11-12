@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.13
+
+- Restore agent terminals grouped in the same order as Add Session (pi, Codex, Claude Code, Antigravity), preserving saved order within each agent.
+
 ## 0.11.12
 
 - Follow a new Codex conversation in the same dedicated terminal even when the server retains older conversation locks. Wait for persisted metadata and exclude subagent threads.

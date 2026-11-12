@@ -6,6 +6,7 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 ## What it does
 
 - Tracks each terminal's conversation ID, working directory, and title automatically.
+- Restores terminals grouped in the same agent order as Add Session: pi, Codex, Claude Code, Antigravity. Sessions within each agent keep their saved order.
 - Restores the exact conversation, rather than whichever session was used most recently.
 - Opens the Terminal panel and focuses the first successfully restored agent.
 - Preserves normal shell integration by launching the agent inside your regular shell.
@@ -142,6 +143,7 @@ On uninstall, remove the pi observer file, the two Claude hook entries whose com
 - Agent hooks/extensions must be enabled. Ephemeral sessions cannot be restored.
 - Unsent input, in-flight tasks, scrollback, split layouts, and transient CLI-side argument changes are not restored. Rekindle's saved per-session arguments are restored.
 - Terminals sharing the same title may not retain their original tab order.
+- VS Code's public Terminal API does not expose tab insertion or reordering. New terminals append to the end of the terminal list; existing or revived terminals keep their current positions. Grouped restoration applies to terminals Rekindle creates on restore.
 - An extra shell that has been used or is running a child process is deliberately retained. Startup cleanup is conservative, not a global prohibition on ordinary terminals.
 
 ## Development

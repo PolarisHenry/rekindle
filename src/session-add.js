@@ -3,11 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { expandHome } = require('./core');
-
-const PROVIDERS = [
-  { label: 'Codex', value: 'codex' }, { label: 'pi', value: 'pi' },
-  { label: 'Claude Code', value: 'claude' }, { label: 'Antigravity', value: 'agy' }
-];
+const { PROVIDERS } = require('./providers');
 
 function resolveAddContext(target) {
   if (typeof target === 'string') return { cwd: target };
@@ -20,7 +16,7 @@ function resolveAddContext(target) {
 async function chooseProvider(vscode, preferred) {
   const context = resolveAddContext(preferred);
   const selected = PROVIDERS.find(item => item.value === context.provider);
-  return selected || vscode.window.showQuickPick([...PROVIDERS].sort((a, b) => a.label.length - b.label.length), {
+  return selected || vscode.window.showQuickPick([...PROVIDERS], {
     title: 'Rekindle: Add Session', placeHolder: 'Choose an agent'
   });
 }

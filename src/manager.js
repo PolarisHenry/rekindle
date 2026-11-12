@@ -9,6 +9,7 @@ const { retireIdleTerminal } = require('./startup');
 const { agentIcon } = require('./agent-icons');
 const { dedicatedCodexConfig } = require('./codex-launch');
 const { piSessionsRoot, resolvePiSessionFile } = require('./pi-session');
+const { compareProviders } = require('./providers');
 const STORAGE_KEY = 'agentSessionRestore.sessions.v1';
 
 class SessionManager {
@@ -395,7 +396,9 @@ class SessionManager {
   async restore() {
     const failures = [];
     let first;
-    for (const entry of this.entries.filter(item => item.enabled !== false)) {
+    // Stable sorting keeps each provider together without changing saved order
+    // within a provider or the history/sidebar's activity ordering.
+    for (const entry of this.entries.filter(item => item.enabled !== false).sort(compareProviders)) {
       try {
         const terminal = await this.open(entry, false, false);
         if (!first && terminal) first = terminal;

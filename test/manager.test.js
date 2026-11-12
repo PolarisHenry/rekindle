@@ -27,6 +27,46 @@ function setup(initial = []) {
 
 const session = id => ({ provider: 'codex', sessionId: id, cwd: os.tmpdir() });
 
+test('restore groups agents in picker order and preserves saved order within each agent', async () => {
+  const { manager, terminals, vscode } = setup();
+  const providers = ['agy', 'codex', 'pi', 'claude', 'codex', 'pi', 'agy'];
+  for (const [index, provider] of providers.entries()) {
+    await manager.add({ ...session(String(index)), provider }, `${provider}-${index}`);
+  }
+  await manager.add({ ...session('disabled'), provider: 'pi' }, 'Disabled', false);
+  const savedOrder = manager.entries.map(entry => entry.id);
+  const opened = [];
+  manager.open = async (entry, reveal, updateActivity) => {
+    assert.equal(reveal, false);
+    assert.equal(updateActivity, false);
+    opened.push(entry.name);
+    const terminal = vscode.window.createTerminal({ name: entry.name });
+    return terminal;
+  };
+  assert.deepEqual(await manager.restore(), []);
+  assert.deepEqual(opened, ['pi-2', 'pi-5', 'codex-1', 'codex-4', 'claude-3', 'agy-0', 'agy-6']);
+  assert.deepEqual(manager.entries.map(entry => entry.id), savedOrder, 'restore does not rewrite saved history order');
+  assert.equal(vscode.window.activeTerminal, terminals[0]);
+});
+
+test('grouped restore continues after a failure and focuses the first successful agent', async () => {
+  const { manager, vscode } = setup();
+  await manager.add({ ...session('codex'), provider: 'codex' }, 'Codex');
+  const failed = await manager.add({ ...session('pi'), provider: 'pi' }, 'Pi');
+  await manager.add({ ...session('claude'), provider: 'claude' }, 'Claude');
+  const opened = [];
+  manager.open = async entry => {
+    opened.push(entry.provider);
+    if (entry.id === failed.id) throw new Error('Unavailable');
+    return vscode.window.createTerminal({ name: entry.name });
+  };
+  const failures = await manager.restore();
+  assert.deepEqual(opened, ['pi', 'codex', 'claude']);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].entry, failed);
+  assert.equal(vscode.window.activeTerminal.name, 'Codex');
+});
+
 test('concurrent restore does not create duplicate terminals; each ID is distinct', async () => {
   const { manager, terminals } = setup();
   const a = await manager.add(session('a'), 'A');
