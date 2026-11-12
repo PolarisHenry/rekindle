@@ -2,7 +2,7 @@
   "name": "agent-session-restore",
   "displayName": "Rekindle",
   "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.11.8",
+  "version": "0.11.10",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -98,6 +98,18 @@
         "command": "agentSessionRestore.refreshHistory",
         "title": "Refresh History",
         "icon": "$(refresh)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.expandAll",
+        "title": "Expand All Sessions",
+        "icon": "$(expand-all)",
+        "category": "Rekindle"
+      },
+      {
+        "command": "agentSessionRestore.collapseAll",
+        "title": "Collapse All Sessions",
+        "icon": "$(collapse-all)",
         "category": "Rekindle"
       },
       {
@@ -336,6 +348,16 @@
           "command": "agentSessionRestore.refreshHistory",
           "when": "view == agentSessionRestore.sessions",
           "group": "navigation@3"
+        },
+        {
+          "command": "agentSessionRestore.expandAll",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@4"
+        },
+        {
+          "command": "agentSessionRestore.collapseAll",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "navigation@5"
         },
         {
           "command": "agentSessionRestore.showHistory",

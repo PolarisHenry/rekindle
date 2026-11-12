@@ -5,6 +5,37 @@ const { groupedSessions, SessionTree } = require('../src/session-tree');
 const { SESSION_COLORS, agentIcon, sessionIcon } = require('../src/agent-icons');
 const row = (id, cwd, enabled = true) => ({ id, provider: 'pi', sessionId: id, name: id, cwd, enabled });
 
+test('Expand All reveals registered tree nodes with complete parent chains in both grouping modes', async () => {
+  for (const groupBy of ['folder', 'agent']) {
+    const tree = Object.create(SessionTree.prototype);
+    Object.assign(tree, {
+      manager: { entries: [row('a', '/work/a'), row('b', '/work/b')] },
+      showHistory: false, history: [], search: '',
+      displayOptions: () => ({ groupBy })
+    });
+    const roots = await tree.getChildren();
+    const calls = [];
+    tree.view = { reveal: async (node, options) => {
+      assert.equal(options.expand, true);
+      assert.equal(options.focus, false);
+      assert.equal(options.select, false);
+      const parent = tree.getParent(node);
+      if (parent) assert.ok((await tree.getChildren(parent)).includes(node));
+      else assert.ok(roots.includes(node));
+      calls.push(node);
+    } };
+    await tree.expandAll();
+    assert.equal(calls.length, roots.length + roots.flatMap(root => root.children).length);
+    for (const root of roots) {
+      assert.equal(tree.getParent(root), undefined);
+      for (const child of root.children) {
+        assert.equal(tree.getParent(child), root);
+        for (const session of child.sessions) assert.equal(tree.getParent(session), child);
+      }
+    }
+  }
+});
+
 test('pending sessions stay visible in the default view until their conversation binds', () => {
   const pending = { id: 'pending-uuid', provider: 'pi', sessionId: undefined, name: 'New Session', cwd: '/work/first' };
   const groups = groupedSessions([row('a','/work/first'), { ...pending, pendingStart: true }], [], false);

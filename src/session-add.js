@@ -68,7 +68,16 @@ function chooseDirectoryWithPicker(vscode, options = {}) {
     picker.placeholder = 'Pick a folder, or type/paste an absolute path (~ supported)';
     let result;
     let interacting = false;
+    let hiddenDuringDialog = false;
+    let settled = false;
     const build = () => { picker.items = directoryPickerItems(picker.value, fixed, initial, recent, activeFolder); };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      for (const subscription of subscriptions) subscription.dispose();
+      picker.dispose();
+      resolve(result);
+    };
     const subscriptions = [
       picker.onDidChangeValue(() => { picker.validationMessage = undefined; build(); }),
       picker.onDidAccept(async () => {
@@ -79,10 +88,34 @@ function chooseDirectoryWithPicker(vscode, options = {}) {
           if (typeof openDialog !== 'function') return;
           interacting = true;
           picker.busy = true;
-          const picked = await openDialog(initial || folders[0]);
-          picker.busy = false;
-          interacting = false;
-          if (picked) { result = picked; picker.hide(); }
+          let picked;
+          let dialogError;
+          try {
+            picked = await openDialog(initial || folders[0]);
+          } catch (error) {
+            dialogError = error;
+          } finally {
+            picker.busy = false;
+            interacting = false;
+          }
+          if (dialogError) {
+            picker.validationMessage = `Could not open the folder picker: ${dialogError.message || dialogError}`;
+            if (hiddenDuringDialog) {
+              hiddenDuringDialog = false;
+              picker.show();
+            }
+            return;
+          }
+          if (picked) {
+            result = picked;
+            if (hiddenDuringDialog) finish();
+            else picker.hide();
+          } else if (hiddenDuringDialog) {
+            // Opening the native dialog can hide a QuickPick on some VS Code
+            // versions. If the user cancels the dialog, let them keep choosing.
+            hiddenDuringDialog = false;
+            picker.show();
+          }
           return;
         }
         if (item.typedPath) {
@@ -97,9 +130,11 @@ function chooseDirectoryWithPicker(vscode, options = {}) {
       })
     ];
     subscriptions.push(picker.onDidHide(() => {
-      for (const subscription of subscriptions) subscription.dispose();
-      picker.dispose();
-      resolve(result);
+      if (interacting) {
+        hiddenDuringDialog = true;
+        return;
+      }
+      finish();
     }));
     build();
     picker.show();

@@ -195,3 +195,37 @@ test('Browse keeps the native dialog optional and returns its picked folder', as
   await picker.accept(picker.items.find(item => item.browse));
   assert.equal(await done, '/picked/from/dialog');
 });
+
+test('Browse survives VS Code hiding the folder QuickPick while the native dialog is open', async () => {
+  const picker = directoryPickerMock();
+  const vscode = { window: { createQuickPick: () => picker } };
+  const done = chooseDirectoryWithPicker(vscode, {
+    folders: ['/work/a'],
+    openDialog: async () => {
+      // VS Code may hide the QuickPick when the native open dialog takes focus.
+      picker.hide();
+      return '/picked/from/dialog';
+    }
+  });
+  await picker.accept(picker.items.find(item => item.browse));
+  assert.equal(await done, '/picked/from/dialog');
+});
+
+test('canceling Browse reopens the folder QuickPick if the native dialog hid it', async () => {
+  const picker = directoryPickerMock();
+  let showCount = 0;
+  picker.show = () => { showCount++; };
+  const vscode = { window: { createQuickPick: () => picker } };
+  const done = chooseDirectoryWithPicker(vscode, {
+    folders: ['/work/a'],
+    openDialog: async () => {
+      picker.hide();
+      return undefined;
+    }
+  });
+  await picker.accept(picker.items.find(item => item.browse));
+  assert.equal(showCount, 2, 'the initial picker is shown again after dialog cancellation');
+  assert.equal(picker.items.find(item => item.cwd).cwd, '/work/a');
+  await picker.accept(picker.items.find(item => item.cwd === '/work/a'));
+  assert.equal(await done, '/work/a');
+});

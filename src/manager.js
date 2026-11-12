@@ -253,12 +253,15 @@ class SessionManager {
     try {
       terminal = await createAgentTerminal(this.vscode, { ...options, iconPath: agentIcon(this.vscode, entry.provider) }, this.log);
       entry.terminal = terminal;
+      this.changed(entry.id);
       await this.startInShell(terminal, entry, command);
       terminal.show(false);
+      this.log(`Started new ${entry.provider} session in ${entry.cwd}; waiting for its first saved conversation`);
       return terminal;
     } catch (error) {
       this.pending.delete(entry.id);
       terminal?.dispose();
+      this.changed(entry.id);
       throw error;
     }
   }
@@ -419,7 +422,7 @@ class SessionManager {
 
   closed(terminal) {
     let didChange = this.removeLiveOnlyForTerminal(terminal, false);
-    for (const [id, entry] of this.pending) if (entry.terminal === terminal) this.pending.delete(id);
+    for (const [id, entry] of this.pending) if (entry.terminal === terminal) { this.pending.delete(id); didChange = true; }
     for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: 'The terminal is closed. The saved conversation can be opened again.', updatedAt: Date.now() }); didChange = true; }
     // Window shutdown also emits terminal-close events. Never erase saved mappings here.
     if (didChange) this.changed();

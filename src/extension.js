@@ -304,6 +304,8 @@ async function activate(context) {
   command('enable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, true); });
   command('disable', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.setEnabled(chosen.id, false); });
   command('search', () => sessionTree.searchSessions());
+  command('expandAll', () => sessionTree.expandAll());
+  command('collapseAll', () => vscode.commands.executeCommand('workbench.actions.treeView.agentSessionRestore.sessions.collapseAll'));
   command('clearSearch', () => sessionTree.setSearch(''));
   command('showHistory', () => sessionTree.setShowHistory(true));
   command('hideHistory', () => sessionTree.setShowHistory(false));

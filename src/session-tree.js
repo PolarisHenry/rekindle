@@ -98,7 +98,7 @@ class SessionTree {
     void this.syncContext();
   }
 
-  refresh(element) { this.events.fire(element); void this.syncContext(); }
+  refresh(element) { this.roots = undefined; this.events.fire(element); void this.syncContext(); }
 
   attachView(view) {
     this.view = view;
@@ -111,6 +111,15 @@ class SessionTree {
     if (!node?.groupId) return;
     this.expandedGroups.set(node.groupId, expanded);
     await this.context.workspaceState.update(`rekindle.expandedGroups.${this.groupBy}`, [...this.expandedGroups]);
+  }
+
+  async expandAll() {
+    if (!this.view) return;
+    const groups = await this.getChildren();
+    for (const group of groups) {
+      await this.view.reveal(group, { expand: true, focus: false, select: false });
+      for (const child of group.children || []) await this.view.reveal(child, { expand: true, focus: false, select: false });
+    }
   }
 
   async syncContext() {
@@ -240,12 +249,23 @@ class SessionTree {
   async getChildren(node) {
     if (node?.kind === 'folder' || node?.kind === 'agent') return node.children || node.sessions;
     if (node) return [];
+    if (this.roots) return this.roots;
     if (this.showHistory) await this.loadHistory();
     const pendingRows = [...(this.manager.pending?.values() || [])].map(entry => ({ ...entry, pendingStart: true }));
     const groups = groupedSessions([...this.manager.entries, ...pendingRows, ...(this.manager.liveOnlyEntries?.values() || [])], this.history, this.showHistory, this.displayOptions());
+    this.parents = new WeakMap();
+    for (const group of groups) {
+      for (const child of group.children || []) {
+        this.parents.set(child, group);
+        for (const session of child.sessions) this.parents.set(session, child);
+      }
+    }
+    this.roots = groups;
     if (this.view) this.view.message = this.search ? `Search: ${this.search}${groups.length ? '' : ' — No matching sessions.'}` : groups.length ? undefined : 'No matching sessions. Use the … menu to show history or all folders.';
     return groups;
   }
+
+  getParent(node) { return this.parents?.get(node); }
 
   getTreeItem(node) {
     const v = this.vscode;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.10
+
+- Add Expand All and Collapse All actions to Sessions.
+- Provide tree parent relationships and stable nodes so Expand All can reveal both grouping levels without an API error.
+- Keep Add Session active when opening the native folder picker hides the directory QuickPick.
+
+## 0.11.9
+
+- Refresh the Sessions tree the moment a new Add Session terminal is created, so the **Starting…** row appears immediately instead of waiting for an unrelated refresh, and remove it when that terminal closes or creation fails.
+- Log new-session creation to the output channel for diagnosability.
+
 ## 0.11.8
 
 - Show newly created Add Session conversations immediately as a spinning **Starting…** row while the CLI has not yet saved its conversation ID, instead of leaving the sidebar blank until the first message; clicking the row focuses its terminal.
