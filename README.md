@@ -12,7 +12,11 @@ Rekindle remembers the conversations running in your VS Code terminals and resto
 - Preserves normal shell integration by launching the agent inside your regular shell.
 - Sets the default `terminal.integrated.hideOnStartup` to `whenEmpty`, preventing VS Code from creating a competing shell before agents restore. With no restored terminals, Rekindle opens one normal shell instead. Explicit user/workspace overrides still take precedence.
 - Observes the entire restoration phase and removes only untouched, idle startup shells.
-- Provides an English **Rekindle → Sessions** sidebar with Folder → Agent → Session or Agent → Folder → Session grouping. By default, it shows tracked sessions in the current workspace, prioritizing the current terminal folder.
+- Provides a localized **Rekindle → Sessions** sidebar with Folder → Agent → Session or Agent → Folder → Session grouping. By default, it shows tracked sessions in the current workspace, prioritizing the current terminal folder.
+
+## Language
+
+Rekindle supports English, Simplified Chinese, Traditional Chinese, Japanese, and Korean. By default, its runtime interface follows VS Code’s display language. Set **Rekindle: Language** to **Auto** or choose a language in Settings; use **Rekindle: Change Interface Language** from the Command Palette or the Sessions view menu for a quick picker. The manual choice applies to Rekindle’s sidebar, pickers, and notifications. VS Code’s native command menus and setting descriptions continue to follow the VS Code display language.
 
 ## Optional manual sessions
 

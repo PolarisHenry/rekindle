@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const vscode = require('vscode');
+const { t, setLocale, retranslate } = require('./localization');
 const { cleanTitle, discoverSessions, isInWorkspace, dispatchFolderAdd, resumeCommand } = require('./core');
 const { SessionManager } = require('./manager');
 const { AutomaticTracker } = require('./automatic');
@@ -20,21 +21,23 @@ const {
 const { selectSession, showSessionDiagnostics, openCompletedSession } = require('./session-actions');
 
 async function activate(context) {
+  const interfaceLanguage = () => vscode.workspace.getConfiguration('agentSessionRestore').get('language', 'auto');
+  setLocale(vscode.env.language, interfaceLanguage());
   const legacyExtension = vscode.extensions?.getExtension(OLD_EXTENSION_ID);
   if (legacyExtension && compareVersions(legacyExtension.packageJSON?.version, BRIDGE_VERSION) < 0) {
-    const reason = `Update ${OLD_EXTENSION_ID} ${legacyExtension.packageJSON?.version || ''} to the passive migration bridge, then reload VS Code.`;
-    void vscode.window.showWarningMessage(`Rekindle has paused to avoid loading two copies of its commands. ${reason}`);
+    const reason = t('Update the installed {0} version {1} to the passive migration bridge, then reload VS Code.', [OLD_EXTENSION_ID, legacyExtension.packageJSON?.version || '']);
+    void vscode.window.showWarningMessage(t('Rekindle has paused to avoid loading two copies of its commands. {0}', [reason]));
     return { ready: Promise.resolve(), blocked: true };
   }
   let migrationResult = { status: 'not-installed' };
   if (legacyExtension && vscode.workspace.workspaceFolders?.length) {
     migrationResult = await importLegacySnapshot({ context, vscode, log: message => console.warn(`[Rekindle] ${message}`) });
     if (migrationResult.status.startsWith('blocked-') && migrationResult.status !== 'blocked-workspace-mismatch') {
-      void vscode.window.showWarningMessage('Rekindle paused to avoid duplicate session restoration. Install the Rekindle Legacy Migration bridge over the old extension and reload VS Code.');
+      void vscode.window.showWarningMessage(t('Rekindle paused to avoid duplicate session restoration. Install the Rekindle Legacy Migration bridge over the old extension and reload VS Code.'));
       return { ready: Promise.resolve(), blocked: true, migration: migrationResult };
     }
     if (migrationResult.status === 'blocked-workspace-mismatch') {
-      void vscode.window.showWarningMessage('Rekindle could not import legacy sessions because the workspace identity did not match. The old bridge remains passive; existing new-identity sessions are unchanged.');
+      void vscode.window.showWarningMessage(t('Rekindle could not import legacy sessions because the workspace identity did not match. The old bridge remains passive; existing new-identity sessions are unchanged.'));
     }
   }
   const output = vscode.window.createOutputChannel('Rekindle');
@@ -50,11 +53,20 @@ async function activate(context) {
   const manager = new SessionManager(vscode, context, log, refresh);
   const completionStatusBar = new CompletionStatusBar(vscode);
   context.subscriptions.push(completionStatusBar);
+  const refreshInterfaceLanguage = () => {
+    setLocale(vscode.env.language, interfaceLanguage());
+    for (const [id, status] of manager.status) {
+      if (status.reason) manager.status.set(id, { ...status, reason: retranslate(status.reason) });
+    }
+    sessionTree?.refresh();
+    completionStatusBar.refreshLanguage();
+  };
   const syncNotificationSettings = () => {
     completionStatusBar.setAvailable(notificationTargets(vscode).statusBar);
     void updateNotificationContext(vscode);
   };
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('agentSessionRestore.language')) refreshInterfaceLanguage();
     if (event.affectsConfiguration('agentSessionRestore.completionNotifications')
       || event.affectsConfiguration('agentSessionRestore.completionNotificationLocation')) syncNotificationSettings();
     if (event.affectsConfiguration('agentSessionRestore.sessionPulse') || event.affectsConfiguration('workbench.reduceMotion')) sessionTree?.refresh();
@@ -82,7 +94,7 @@ async function activate(context) {
 
   const command = (name, callback) => context.subscriptions.push(vscode.commands.registerCommand(`agentSessionRestore.${name}`, async (...args) => {
     try { return await callback(...args); }
-    catch (error) { log(error.stack || error.message); await vscode.window.showErrorMessage(`Rekindle: ${error.message}`); }
+    catch (error) { log(error.stack || error.message); await vscode.window.showErrorMessage(t('Rekindle: {0}', [error.message])); }
   }));
 
   async function pickEntry(entry) {
@@ -93,7 +105,7 @@ async function activate(context) {
       return undefined;
     }
     if (entry?.sessionId) return sessionTree.ensureTracked(entry);
-    const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: 'Choose a session' });
+    const picked = await vscode.window.showQuickPick(manager.entries.map(saved => ({ label: saved.name, description: saved.provider, detail: saved.cwd, entry: saved })), { title: t('Choose a session') });
     return picked?.entry;
   }
 
@@ -124,14 +136,14 @@ async function activate(context) {
       active,
       recent: loadRecentFolders(),
       openDialog: async defaultFolder => (await vscode.window.showOpenDialog({
-        canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: 'Use Folder',
+        canSelectFiles: false, canSelectFolders: true, canSelectMany: false, openLabel: t('Use Folder'),
         defaultUri: defaultFolder ? vscode.Uri.file(defaultFolder) : undefined
       }))?.[0]?.fsPath
     });
   }
 
   command('add', async target => {
-    if (!vscode.workspace.workspaceFolders?.length) throw new Error('Open a workspace before adding a session.');
+    if (!vscode.workspace.workspaceFolders?.length) throw new Error(t('Open a workspace before adding a session.'));
     const addContext = resolveAddContext(target);
     const provider = await chooseProvider(vscode, addContext);
     if (!provider) return;
@@ -139,7 +151,7 @@ async function activate(context) {
     // Only an explicit context (group +, Explorer) may preselect a folder. The active
     // terminal folder is merely listed, keeping the toolbar action isolated.
     const suggested = addContext.cwd;
-    const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Reading saved conversations' }, () => discoverSessions(provider.value, manager.config(), log));
+    const sessions = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: t('Reading saved conversations') }, () => discoverSessions(provider.value, manager.config(), log));
     sessions.sort((a,b) => Number(isInWorkspace(b.cwd,folders))-Number(isInWorkspace(a.cwd,folders)) || b.updatedAt-a.updatedAt);
     const selected = await pickConversation(vscode, provider.label, sessions);
     if (!selected) return;
@@ -147,17 +159,17 @@ async function activate(context) {
     if (!session) {
       let sessionId;
       if (!selected.create) {
-        sessionId = await vscode.window.showInputBox({ title: `Add ${provider.label} Session`, prompt: 'Enter the exact ID of an existing saved conversation.', validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? 'Enter a valid saved session ID.' : undefined });
+        sessionId = await vscode.window.showInputBox({ title: t('Add {0} Session', [provider.label]), prompt: t('Enter the exact ID of an existing saved conversation.'), validateInput: value => !value.trim() || /^-/.test(value.trim()) || /[\x00-\x1f]/.test(value) ? t('Enter a valid saved session ID.') : undefined });
         if (!sessionId) return;
       }
       const cwd = await resolveWorkingDirectory({ cwd: addContext.cwd, folders, suggested, chooseDirectory });
       if (!cwd) return;
       await rememberRecentFolder(cwd, folders);
-      session = { provider: provider.value, sessionId: sessionId?.trim(), cwd, title: sessionId?.trim() || 'New Session' };
+      session = { provider: provider.value, sessionId: sessionId?.trim(), cwd, title: sessionId?.trim() || t('New Session') };
     }
     const name = selected.create && selected.name ? selected.name : await vscode.window.showInputBox({
-      title: 'Terminal name', value: selected.create ? '' : `${provider.label} · ${cleanTitle(session.title).slice(0,45)}`,
-      validateInput: value => value.trim() ? undefined : 'Enter a name.'
+      title: t('Terminal name'), value: selected.create ? '' : `${provider.label} · ${cleanTitle(session.title).slice(0,45)}`,
+      validateInput: value => value.trim() ? undefined : t('Enter a name.')
     });
     if (!name?.trim()) return;
     if (selected.create) return manager.create(session, cleanTitle(name));
@@ -192,7 +204,7 @@ async function activate(context) {
         description: path.basename(item.cwd || ''),
         detail: item.cwd,
         item
-      })), { title: 'Completed Sessions' });
+      })), { title: t('Completed Sessions') });
       selected = choice?.item;
     }
     if (!selected) return;
@@ -209,18 +221,18 @@ async function activate(context) {
   command('retryRestore', async entry => { const chosen = await pickEntry(entry); if (chosen) await manager.open(chosen, true); });
   command('restore', async () => {
     const failures = await manager.restore();
-    if (failures.length) await vscode.window.showWarningMessage(`${failures.length} session(s) could not be restored. See logs for details.`, 'Show Logs').then(choice => { if (choice) output.show(); });
+    if (failures.length) await vscode.window.showWarningMessage(t('{0} session(s) could not be restored. See logs for details.', [failures.length]), t('Show Logs')).then(choice => { if (choice) output.show(); });
   });
   command('remove', async entry => {
     const chosen = await pickEntry(entry);
     if (!chosen) return;
     await manager.remove(chosen.id);
-    await vscode.window.showInformationMessage(`Stopped restoring "${chosen.name}". Its terminal and conversation history are unchanged.`);
+    await vscode.window.showInformationMessage(t('Stopped restoring "{0}". Its terminal and conversation history are unchanged.', [chosen.name]));
   });
   command('rename', async entry => {
     const chosen = await pickEntry(entry);
     if (!chosen) return;
-    const name = await vscode.window.showInputBox({ title: 'Rename Terminal (applies next time)', value: chosen.name, validateInput: value => value.trim() ? undefined : 'Enter a name' });
+    const name = await vscode.window.showInputBox({ title: t('Rename Terminal (applies next time)'), value: chosen.name, validateInput: value => value.trim() ? undefined : t('Enter a name') });
     if (!name) return;
     chosen.name = cleanTitle(name);
     chosen.customName = true;
@@ -232,22 +244,22 @@ async function activate(context) {
       || manager.entries.find(item => item.provider === chosen.provider && item.sessionId === chosen.sessionId));
     if (!chosen) return;
     const mode = await vscode.window.showQuickPick([
-      { label: 'Inherit global arguments', value: 'inherit', description: 'Follow Rekindle launch settings.' },
-      { label: 'Set arguments for this session…', value: 'override', description: 'Enter a JSON array; [] explicitly disables global arguments.' }
-    ], { title: `${chosen.name} Arguments` });
+      { label: t('Inherit global arguments'), value: 'inherit', description: t('Follow Rekindle launch settings.') },
+      { label: t('Set arguments for this session…'), value: 'override', description: t('Enter a JSON array; [] explicitly disables global arguments.') }
+    ], { title: t('{0} Arguments', [chosen.name]) });
     if (!mode) return;
     if (mode.value === 'inherit') { if (existing) await manager.setSessionArguments(existing.id, undefined); return; }
     const current = Array.isArray(chosen.sessionArguments) ? JSON.stringify(chosen.sessionArguments) : '[]';
     const raw = await vscode.window.showInputBox({
-      title: `${chosen.name} Arguments`, prompt: 'Enter a JSON array of individual arguments, e.g. ["--model","o3"].', value: current,
+      title: t('{0} Arguments', [chosen.name]), prompt: t('Enter a JSON array of individual arguments, e.g. ["--model","o3"].'), value: current,
       validateInput: value => {
         try {
           const parsed = JSON.parse(value);
-          if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string' || /[\0\r\n]/.test(item))) return 'Enter a JSON array of single-line strings.';
+          if (!Array.isArray(parsed) || parsed.some(item => typeof item !== 'string' || /[\0\r\n]/.test(item))) return t('Enter a JSON array of single-line strings.');
           const config = { [`${chosen.provider}Arguments`]: parsed };
           require('./core').startupArguments(chosen.provider, config);
           return undefined;
-        } catch { return 'Enter valid JSON containing an array of strings.'; }
+        } catch { return t('Enter valid JSON containing an array of strings.'); }
       }
     });
     if (raw !== undefined) {
@@ -263,7 +275,7 @@ async function activate(context) {
     const chosen = await selectSession(vscode, manager, sessionTree, entry);
     if (!chosen) return;
     await vscode.env.clipboard.writeText(resumeCommand(chosen, manager.configFor(chosen)));
-    await vscode.window.showInformationMessage('Resume command copied to the clipboard.');
+    await vscode.window.showInformationMessage(t('Resume command copied to the clipboard.'));
   });
   command('restart', async entry => {
     const chosen = await pickEntry(entry);
@@ -287,11 +299,11 @@ async function activate(context) {
   });
   command('hideInactiveHistory', async () => {
     const count = await sessionTree.hideInactiveHistory();
-    await vscode.window.showInformationMessage(`Hidden ${count} inactive history records. Originals are untouched; use Reset Hidden History to restore them.`);
+    await vscode.window.showInformationMessage(t('Hidden {0} inactive history records. Originals are untouched; use Reset Hidden History to restore them.', [count]));
   });
   command('resetHiddenHistory', async () => {
     await manager.resetHiddenHistory();
-    await vscode.window.showInformationMessage('Hidden history is visible again.');
+    await vscode.window.showInformationMessage(t('Hidden history is visible again.'));
   });
   command('historyRange1', () => sessionTree.setHistoryRange(1));
   command('historyRange3', () => sessionTree.setHistoryRange(3));
@@ -318,28 +330,42 @@ async function activate(context) {
   command('enableCompletionNotifications', async () => {
     await setNotificationsEnabled(vscode, true);
     syncNotificationSettings();
-    vscode.window.setStatusBarMessage?.('Completion reminders enabled', 2500);
+    vscode.window.setStatusBarMessage?.(t('Completion reminders enabled'), 2500);
   });
   command('disableCompletionNotifications', async () => {
     await setNotificationsEnabled(vscode, false);
     completionStatusBar.clear();
     completionStatusBar.setAvailable(false);
-    vscode.window.setStatusBarMessage?.('Completion reminders disabled', 2500);
+    vscode.window.setStatusBarMessage?.(t('Completion reminders disabled'), 2500);
   });
   command('completionLocationStatusBar', async () => {
     await setCompletionNotificationLocation(vscode, 'statusBar');
     syncNotificationSettings();
-    vscode.window.setStatusBarMessage?.('Completion reminders: Status Bar', 2500);
+    vscode.window.setStatusBarMessage?.(t('Completion reminders: Status Bar'), 2500);
   });
   command('completionLocationNative', async () => {
     await setCompletionNotificationLocation(vscode, 'native');
     syncNotificationSettings();
-    vscode.window.setStatusBarMessage?.('Completion reminders: Native Notification', 2500);
+    vscode.window.setStatusBarMessage?.(t('Completion reminders: Native Notification'), 2500);
   });
   command('completionLocationBoth', async () => {
     await setCompletionNotificationLocation(vscode, 'both');
     syncNotificationSettings();
-    vscode.window.setStatusBarMessage?.('Completion reminders: Both', 2500);
+    vscode.window.setStatusBarMessage?.(t('Completion reminders: Both'), 2500);
+  });
+  command('changeLanguage', async () => {
+    const options = [
+      { label: t('Automatic (follow VS Code display language)'), description: t('Use the language selected in VS Code settings.'), value: 'auto' },
+      { label: '简体中文', value: 'zh-cn' },
+      { label: '繁體中文', value: 'zh-tw' },
+      { label: 'English', value: 'en' },
+      { label: '日本語', value: 'ja' },
+      { label: '한국어', value: 'ko' }
+    ];
+    const selected = await vscode.window.showQuickPick(options, { title: t('Select Rekindle interface language'), placeHolder: t('Language preference applies to Rekindle runtime UI; VS Code menus and settings follow the VS Code display language.') });
+    if (!selected) return;
+    await vscode.workspace.getConfiguration('agentSessionRestore').update('language', selected.value, vscode.ConfigurationTarget.Global);
+    refreshInterfaceLanguage();
   });
   command('logs', () => output.show());
   context.subscriptions.push(vscode.window.onDidCloseTerminal(terminal => {
@@ -373,7 +399,7 @@ async function activate(context) {
       void tracker.start().catch(error => log(`Observer setup failed: ${error.message}`));
     }
     if (failures.length) {
-      void vscode.window.showWarningMessage(`${failures.length} session(s) could not be restored.`, 'Show Logs').then(choice => { if (choice) output.show(); });
+      void vscode.window.showWarningMessage(t('{0} session(s) could not be restored.', [failures.length]), t('Show Logs')).then(choice => { if (choice) output.show(); });
     }
   })();
   return { ready, manager, tracker, tree: sessionTree, view, migration: migrationResult };

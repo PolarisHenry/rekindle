@@ -1,5 +1,6 @@
 'use strict';
 const path = require('node:path');
+const { t } = require('./localization');
 const { sessionKey, discoverSessions, isInWorkspace, normalizeTimestamp } = require('./core');
 const { agentIcon, sessionIcon } = require('./agent-icons');
 const AGENT_NAMES = { codex: 'Codex', pi: 'pi', claude: 'Claude Code', agy: 'Antigravity' };
@@ -123,7 +124,7 @@ class SessionTree {
   }
 
   async syncContext() {
-    if (this.view) this.view.description = `${this.groupBy === 'folder' ? 'By Folder' : 'By Agent'} · ${this.workspaceOnly ? 'Workspace' : 'All Folders'} · ${this.showHistory ? `History ${this.historyRangeDays === 'all' ? 'All' : `${this.historyRangeDays}d`}` : 'Tracked'}`;
+    if (this.view) this.view.description = `${t(this.groupBy === 'folder' ? 'By Folder' : 'By Agent')} · ${t(this.workspaceOnly ? 'Workspace' : 'All Folders')} · ${this.showHistory ? (this.historyRangeDays === 'all' ? t('All History') : t('History: {0}', [t('{0} days', [this.historyRangeDays])])) : t('Tracked')}`;
     await Promise.all([
       ['rekindle.searchActive', Boolean(this.search)],
       ['rekindle.showHistory', this.showHistory],
@@ -142,7 +143,7 @@ class SessionTree {
   }
 
   async setGrouping(value) {
-    if (!['folder','agent'].includes(value)) throw new Error('Unknown grouping mode.');
+    if (!['folder','agent'].includes(value)) throw new Error(t('Unknown grouping mode.'));
     this.groupBy = value;
     this.expandedGroups = new Map(this.context.workspaceState.get(`rekindle.expandedGroups.${value}`, []));
     await this.context.workspaceState.update('rekindle.groupBy', value);
@@ -151,7 +152,7 @@ class SessionTree {
   }
 
   async setHistoryRange(value) {
-    if (value !== 'all' && (!Number.isInteger(value) || value < 1 || value > 36500)) throw new Error('History range must be All or a whole number from 1 to 36500 days.');
+    if (value !== 'all' && (!Number.isInteger(value) || value < 1 || value > 36500)) throw new Error(t('History range must be All or a whole number from 1 to 36500 days.'));
     this.historyRangeDays = value;
     await this.context.workspaceState.update('rekindle.historyRangeDays', value);
     await this.syncContext();
@@ -161,7 +162,7 @@ class SessionTree {
   async hideHistoryEntry(node) {
     if (!node?.provider || !node.sessionId) return;
     const tracked = this.manager.entries.find(entry => sessionKey(entry) === sessionKey(node));
-    if (tracked && (tracked.enabled !== false || tracked.favorite || this.manager.live.has(tracked.id))) throw new Error('Enabled, favorite, or running sessions are kept visible. Disable or unfavorite it first.');
+    if (tracked && (tracked.enabled !== false || tracked.favorite || this.manager.live.has(tracked.id))) throw new Error(t('Enabled, favorite, or running sessions are kept visible. Disable or unfavorite it first.'));
     await this.manager.hideFromHistory(node);
     this.refresh();
   }
@@ -177,7 +178,7 @@ class SessionTree {
   }
 
   async setCustomHistoryRange() {
-    const raw = await this.vscode.window.showInputBox({ title: 'History Range', prompt: 'Show history from the last 1 to 36500 days.', value: String(this.historyRangeDays === 'all' ? 30 : this.historyRangeDays), validateInput: value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 36500 ? undefined : 'Enter a whole number from 1 to 36500.' });
+    const raw = await this.vscode.window.showInputBox({ title: t('History Range'), prompt: t('Show history from the last 1 to 36500 days.'), value: String(this.historyRangeDays === 'all' ? 30 : this.historyRangeDays), validateInput: value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 36500 ? undefined : t('Enter a whole number from 1 to 36500.') });
     if (raw) await this.setHistoryRange(Number(raw));
   }
 
@@ -197,8 +198,8 @@ class SessionTree {
   async searchSessions() {
     const input = this.vscode.window.createInputBox();
     const previous = this.search;
-    input.title = 'Search Sessions';
-    input.placeholder = 'Search name, agent, folder, or session ID';
+    input.title = t('Search Sessions');
+    input.placeholder = t('Search name, agent, folder, or session ID');
     input.value = previous;
     let accepted = false;
     const subscriptions = [
@@ -261,7 +262,7 @@ class SessionTree {
       }
     }
     this.roots = groups;
-    if (this.view) this.view.message = this.search ? `Search: ${this.search}${groups.length ? '' : ' — No matching sessions.'}` : groups.length ? undefined : 'No matching sessions. Use the … menu to show history or all folders.';
+    if (this.view) this.view.message = this.search ? `${t('Search: {0}', [this.search])}${groups.length ? '' : ` — ${t('No matching sessions.')}`}` : groups.length ? undefined : t('No matching sessions. Use the … menu to show history or all folders.');
     return groups;
   }
 
@@ -276,7 +277,7 @@ class SessionTree {
       const defaultExpanded = node.sessions.some(entry => !entry.historyOnly);
       const item = new v.TreeItem(node.kind === 'folder' ? path.basename(node.cwd) || node.cwd : AGENT_NAMES[node.provider] || node.provider, (this.expandedGroups?.get(node.groupId) ?? defaultExpanded) ? v.TreeItemCollapsibleState.Expanded : v.TreeItemCollapsibleState.Collapsed);
       item.id = `group:${node.groupId}`;
-      item.description = `${enabled} enabled · ${liveOnly ? `${liveOnly} live · ` : ''}${starting ? `${starting} starting · ` : ''}${node.sessions.length} sessions`;
+      item.description = t('{0} enabled · {1}{2}{3} sessions', [enabled, liveOnly ? `${liveOnly} ${t('live')} · ` : '', starting ? `${starting} ${t('starting')} · ` : '', node.sessions.length]);
       item.tooltip = node.kind === 'folder' ? node.cwd : AGENT_NAMES[node.provider] || node.provider;
       item.iconPath = node.kind === 'folder' ? new v.ThemeIcon('folder') : agentIcon(v, node.provider);
       item.contextValue = node.kind === 'folder' ? 'sessionFolder' : 'sessionAgent';
@@ -287,23 +288,23 @@ class SessionTree {
     const item = new v.TreeItem(node.name, v.TreeItemCollapsibleState.None);
     item.id = `session:${rowKey(node)}`;
     if (node.pendingStart) {
-      item.description = 'Starting…';
-      item.tooltip = `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\nWaiting for the agent to save its conversation. Send it a first message; the row becomes exactly bound and restorable automatically.`;
+      item.description = t('Starting…');
+      item.tooltip = `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\n${t('Waiting for the agent to save its conversation. Send it a first message; the row becomes exactly bound and restorable automatically.')}`;
       item.iconPath = new v.ThemeIcon('sync~spin');
       item.contextValue = 'pendingSession';
-      item.command = { command: 'agentSessionRestore.open', title: 'Focus Terminal', arguments: [node] };
+      item.command = { command: 'agentSessionRestore.open', title: t('Focus Terminal'), arguments: [node] };
       return item;
     }
     const working = this.manager.working?.has(node.id) === true;
     const status = this.manager.status?.get(node.id);
-    const statusText = node.ephemeral ? 'Unknown · Live Only' : working ? 'Working' : status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Restore Failed' : running && v.window.terminals.includes(running) ? 'Open' : '';
-    item.description = node.ephemeral ? statusText : [node.favorite ? '★ Favorite' : '', node.historyOnly || node.archived ? 'History' : enabled ? '' : 'Auto Restore Off', statusText].filter(Boolean).join(' · ');
+    const statusText = node.ephemeral ? t('Unknown · Live Only') : working ? t('Working') : status?.state === 'unknown' ? t('Unknown') : status?.state === 'restore-failed' ? t('Restore Failed') : running && v.window.terminals.includes(running) ? t('Open') : '';
+    item.description = node.ephemeral ? statusText : [node.favorite ? t('★ Favorite') : '', node.historyOnly || node.archived ? t('History') : enabled ? '' : t('Auto Restore Off'), statusText].filter(Boolean).join(' · ');
     item.tooltip = node.ephemeral
-      ? `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\nThis Codex terminal is live, but no exact conversation ID is available. Open focuses the existing terminal only; it cannot be restored automatically.${status?.reason ? `\n${status.reason}` : ''}`
-      : `${node.provider}\n${node.cwd}\nSession: ${node.sessionId}\n${enabled ? 'Auto restore enabled' : 'Auto restore disabled'}${status?.reason ? `\n${status.reason}` : ''}\nClick to open.`;
+      ? `${AGENT_NAMES[node.provider] || node.provider}\n${node.cwd}\n${t('This Codex terminal is live, but no exact conversation ID is available. Open focuses the existing terminal only; it cannot be restored automatically.')}${status?.reason ? `\n${status.reason}` : ''}`
+      : `${node.provider}\n${node.cwd}\n${t('Session: {0}', [node.sessionId])}\n${t(enabled ? 'Auto restore enabled' : 'Auto restore disabled')}${status?.reason ? `\n${status.reason}` : ''}\n${t('Click to open.')}`;
     item.iconPath = sessionIcon(v, node.provider, working, v.workspace?.getConfiguration('agentSessionRestore').get('sessionPulse', true) !== false && v.workspace?.getConfiguration('workbench').get('reduceMotion') !== 'on');
     item.contextValue = node.ephemeral ? 'liveSessionUnknown' : `${node.historyOnly ? 'historySession' : enabled ? 'enabledSession' : 'disabledSession'}${node.favorite ? 'Favorite' : ''}${status?.state === 'unknown' ? 'Unknown' : status?.state === 'restore-failed' ? 'Failed' : ''}`;
-    item.command = { command: 'agentSessionRestore.open', title: 'Open Session', arguments: [node] };
+    item.command = { command: 'agentSessionRestore.open', title: t('Open Session'), arguments: [node] };
     return item;
   }
 

@@ -1,25 +1,26 @@
 'use strict';
+const { t } = require('./localization');
 const { cleanTitle } = require('./core');
 
 function pickConversation(vscode, providerName, sessions) {
   return new Promise(resolve => {
     const picker = vscode.window.createQuickPick();
-    picker.title = `Add ${providerName} Session`;
-    picker.placeholder = 'Type a name for a new conversation, or pick a saved one (reopens in its own folder)';
+    picker.title = t('Add {0} Session', [providerName]);
+    picker.placeholder = t('Type a name for a new conversation, or pick a saved one (reopens in its own folder)');
     picker.matchOnDescription = true;
     picker.matchOnDetail = true;
     let result;
     const update = () => {
       const name = cleanTitle(picker.value);
       const create = {
-        label: name ? `$(add) ${name}` : '$(add) Create New Session',
-        description: name ? 'Create new session' : 'Start a separate conversation',
+        label: name ? `$(add) ${name}` : '$(add) ' + t('Create New Session'),
+        description: name ? t('Create new session') : t('Start a separate conversation'),
         create: true,
         name,
         alwaysShow: true
       };
       picker.items = [create, ...sessions.map(session => ({ label:session.title, description:session.cwd, detail:session.sessionId, session })),
-        {label:'$(edit) Enter a session ID', manual:true, alwaysShow:true}];
+        {label:'$(edit) ' + t('Enter a session ID'), manual:true, alwaysShow:true}];
       if (name) picker.activeItems = [create];
     };
     const subscriptions = [

@@ -1,4 +1,5 @@
 'use strict';
+const { t } = require('./localization');
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -75,7 +76,7 @@ class SessionManager {
     }
     this.live.set(id, terminal);
     if (!this.status.has(id)) {
-      this.status.set(id, { state: 'unknown', reason: 'Codex is running, but its shared daemon has not exposed an exact conversation binding. This live terminal can be focused, but it cannot be auto-restored until an exact session is identified.', updatedAt: Date.now() });
+      this.status.set(id, { state: 'unknown', reason: t('Codex is running, but its shared daemon has not exposed an exact conversation binding. This live terminal can be focused, but it cannot be auto-restored until an exact session is identified.'), updatedAt: Date.now() });
       changed = true;
     }
     if (changed) this.changed(id);
@@ -150,8 +151,8 @@ class SessionManager {
 
   async setSessionArguments(id, args) {
     const entry = this.entries.find(item => item.id === id);
-    if (!entry) throw new Error('This session is no longer tracked.');
-    if (args !== undefined && !Array.isArray(args)) throw new Error('Session arguments must be a JSON array.');
+    if (!entry) throw new Error(t('This session is no longer tracked.'));
+    if (args !== undefined && !Array.isArray(args)) throw new Error(t('Session arguments must be a JSON array.'));
     if (args !== undefined) startupArguments(entry.provider, { [`${entry.provider}Arguments`]: args });
     if (args === undefined) delete entry.sessionArguments;
     else entry.sessionArguments = [...args];
@@ -161,7 +162,7 @@ class SessionManager {
   async hideFromHistory(session) {
     if (!session || !session.sessionId || !session.provider) return;
     const tracked = this.entries.find(entry => sessionKey(entry) === sessionKey(session));
-    if (tracked && (tracked.enabled !== false || tracked.favorite || this.live.has(tracked.id))) throw new Error('Enabled, favorite, or running sessions are kept visible.');
+    if (tracked && (tracked.enabled !== false || tracked.favorite || this.live.has(tracked.id))) throw new Error(t('Enabled, favorite, or running sessions are kept visible.'));
     const key = sessionKey(session);
     this.hiddenHistory.add(key);
     await this.context.workspaceState.update('rekindle.hiddenHistory.v1', [...this.hiddenHistory]);
@@ -259,12 +260,12 @@ class SessionManager {
   }
 
   async create(session, name) {
-    if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before starting agents.');
+    if (!this.vscode.workspace.isTrusted) throw new Error(t('Trust this workspace before starting agents.'));
     const entry = { ...session, id: randomUUID(), name, customName: true };
     const config = await this.launchConfig(entry);
     const command = newSessionCommand(entry.provider, config);
     const stat = await fs.stat(entry.cwd).catch(() => null);
-    if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
+    if (!stat?.isDirectory()) throw new Error(t('Project directory not found: {0}', [entry.cwd]));
     const options = launchOptions({ ...entry, sessionId: 'pending' }, config);
     if (process.platform === 'win32') options.shellArgs = startupArguments(entry.provider, config);
     this.pending.set(entry.id, entry);
@@ -309,18 +310,18 @@ class SessionManager {
 
   async open(entry, reveal = true, updateActivity = true) {
     if (entry.ephemeral) {
-      if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before opening agent terminals.');
+      if (!this.vscode.workspace.isTrusted) throw new Error(t('Trust this workspace before opening agent terminals.'));
       const terminal = this.live.get(entry.id);
       if (!terminal || terminal.exitStatus !== undefined || !this.vscode.window.terminals.includes(terminal)) {
         this.removeLiveOnly(entry.id);
-        throw new Error('This live Codex terminal is no longer available.');
+        throw new Error(t('This live Codex terminal is no longer available.'));
       }
       if (reveal) terminal.show(false);
       return terminal;
     }
-    if (entry.unresolved) throw new Error('Cannot identify this terminal in a shared Codex daemon. Restore skipped to avoid opening the wrong conversation.');
-    if (!this.vscode.workspace.isTrusted) throw new Error('Trust this workspace before restoring agent sessions.');
-    if (!this.entries.some(item => item.id === entry.id)) throw new Error('This session is no longer tracked.');
+    if (entry.unresolved) throw new Error(t('Cannot identify this terminal in a shared Codex daemon. Restore skipped to avoid opening the wrong conversation.'));
+    if (!this.vscode.workspace.isTrusted) throw new Error(t('Trust this workspace before restoring agent sessions.'));
+    if (!this.entries.some(item => item.id === entry.id)) throw new Error(t('This session is no longer tracked.'));
     await this.unhideSession(entry);
     const known = this.live.get(entry.id) || this.vscode.window.terminals.find(terminal => terminal.creationOptions.env?.AGENT_SESSION_RESTORE_ID === entry.id);
     if (known && known.exitStatus === undefined && this.vscode.window.terminals.includes(known)) {
@@ -335,14 +336,14 @@ class SessionManager {
         }
       }
       this.live.set(entry.id, known);
-      if (retrying || !this.status.has(entry.id)) this.status.set(entry.id, { state: 'unknown', reason: 'Waiting for the agent session binding to be identified.', updatedAt: Date.now() });
+      if (retrying || !this.status.has(entry.id)) this.status.set(entry.id, { state: 'unknown', reason: t('Waiting for the agent session binding to be identified.'), updatedAt: Date.now() });
       if (reveal) known.show(false);
       return known;
     }
     if (this.opening.has(entry.id)) return this.opening.get(entry.id);
     const opening = (async () => {
       const stat = await fs.stat(entry.cwd).catch(() => null);
-      if (!stat?.isDirectory()) throw new Error(`Project directory not found: ${entry.cwd}`);
+      if (!stat?.isDirectory()) throw new Error(t('Project directory not found: {0}', [entry.cwd]));
       if (entry.provider === 'pi') {
         const sessionFile = await resolvePiSessionFile({
           sessionId: entry.sessionId,
@@ -350,7 +351,7 @@ class SessionManager {
           sessionFile: entry.sessionFile,
           sessionRoot: piSessionsRoot(this.configFor(entry))
         });
-        if (!sessionFile) throw new Error('The saved pi session file is missing or does not match this session ID and working folder. Restore was skipped to avoid opening a different conversation.');
+        if (!sessionFile) throw new Error(t('The saved pi session file is missing or does not match this session ID and working folder. Restore was skipped to avoid opening a different conversation.'));
         if (entry.sessionFile !== sessionFile) {
           entry.sessionFile = sessionFile;
           await this.save();
@@ -367,7 +368,7 @@ class SessionManager {
       try {
         terminal = await createAgentTerminal(this.vscode, { ...launchOptions(entry, await this.launchConfig(entry)), iconPath: agentIcon(this.vscode, entry.provider) }, this.log, undefined, revived);
         this.live.set(entry.id, terminal);
-        this.status.set(entry.id, { state: 'unknown', reason: 'Waiting for the agent session binding to be identified.', updatedAt: Date.now() });
+        this.status.set(entry.id, { state: 'unknown', reason: t('Waiting for the agent session binding to be identified.'), updatedAt: Date.now() });
         await this.startInShell(terminal, entry);
         if (updateActivity) await this.markOpened(entry.id, Date.now());
         if (revived && terminal !== revived) await retireIdleTerminal(this.vscode, revived, this.log);
@@ -419,8 +420,8 @@ class SessionManager {
 
   async restart(entry) {
     const current = this.entries.find(item => item.id === entry.id);
-    if (!current) throw new Error('This session is no longer tracked.');
-    if (current.unresolved) throw new Error('Cannot restart because this terminal is not bound to an exact conversation.');
+    if (!current) throw new Error(t('This session is no longer tracked.'));
+    if (current.unresolved) throw new Error(t('Cannot restart because this terminal is not bound to an exact conversation.'));
     const terminal = this.live.get(current.id);
     if (terminal && this.vscode.window.terminals.includes(terminal) && terminal.exitStatus === undefined) {
       this.restarting.add(terminal);
@@ -434,7 +435,7 @@ class SessionManager {
           });
           if (!this.vscode.window.terminals.includes(terminal)) { clearTimeout(timer); subscription?.dispose(); resolve(true); }
         });
-        if (!closed) throw new Error('The selected terminal did not close, so it was not restarted.');
+        if (!closed) throw new Error(t('The selected terminal did not close, so it was not restarted.'));
         this.closed(terminal);
       } finally { this.restarting.delete(terminal); }
     }
@@ -444,7 +445,7 @@ class SessionManager {
   closed(terminal) {
     let didChange = this.removeLiveOnlyForTerminal(terminal, false);
     for (const [id, entry] of this.pending) if (entry.terminal === terminal) { this.pending.delete(id); didChange = true; }
-    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: 'The terminal is closed. The saved conversation can be opened again.', updatedAt: Date.now() }); didChange = true; }
+    for (const [id, live] of this.live) if (live === terminal) { this.live.delete(id); this.working.delete(id); this.status.set(id, { state: 'saved', reason: t('The terminal is closed. The saved conversation can be opened again.'), updatedAt: Date.now() }); didChange = true; }
     // Window shutdown also emits terminal-close events. Never erase saved mappings here.
     if (didChange) this.changed();
   }

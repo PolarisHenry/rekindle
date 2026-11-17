@@ -1,4 +1,5 @@
 'use strict';
+const { t } = require('./localization');
 
 const CONTEXT_KEY = 'rekindle.completionNotifications';
 const LOCATION_CONTEXT_KEY = 'rekindle.completionNotificationLocation';
@@ -38,7 +39,7 @@ async function setNotificationsEnabled(vscode, enabled) {
 }
 
 async function setCompletionNotificationLocation(vscode, location) {
-  if (!LOCATIONS.includes(location)) throw new Error('Choose Status Bar, Native Notification, or Both.');
+  if (!LOCATIONS.includes(location)) throw new Error(t('Choose Status Bar, Native Notification, or Both.'));
   const target = vscode.workspace.workspaceFolders?.length
     ? vscode.ConfigurationTarget.Workspace
     : vscode.ConfigurationTarget.Global;
@@ -72,8 +73,13 @@ class CompletionStatusBar {
     this.available = true;
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     this.item.command = 'agentSessionRestore.openCompletionStatus';
-    this.item.name = 'Rekindle completed sessions';
+    this.item.name = t('Rekindle completed sessions');
     this.item.hide();
+  }
+
+  refreshLanguage() {
+    this.item.name = t('Rekindle completed sessions');
+    this.render();
   }
 
   add(entry, dedupeKey) {
@@ -136,7 +142,7 @@ class CompletionStatusBar {
     const latestName = compactTitle(latest.name);
     this.item.text = `$(check) ${providerName} · ${latestName}${count > 1 ? ` +${count - 1}` : ''}`;
     this.item.tooltip = this.pending.map(item => `${item.provider} · ${item.name} · ${item.cwd.replace(/[\r\n\t]/g, ' ')}`).join('\n');
-    this.item.accessibilityInformation = { label: `${count} completed agent session${count === 1 ? '' : 's'}; activate to open` };
+    this.item.accessibilityInformation = { label: t('{0} completed agent session(s); activate to open', [count]) };
     this.item.show();
   }
 

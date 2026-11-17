@@ -1,6 +1,7 @@
 'use strict';
 
 const { sessionKey } = require('./core');
+const { t } = require('./localization');
 
 async function selectSession(vscode, manager, tree, target) {
   if (target?.sessionId || target?.ephemeral) return target;
@@ -14,7 +15,7 @@ async function selectSession(vscode, manager, tree, target) {
     description: entry.provider,
     detail: entry.cwd,
     entry
-  })), { title: 'Choose a session' });
+  })), { title: t('Choose a session') });
   return choice?.entry;
 }
 
@@ -23,23 +24,24 @@ async function showSessionDiagnostics({ vscode, manager, tree, output, entry }) 
   if (!chosen) return;
   if (chosen.ephemeral) {
     const status = manager.status.get(chosen.id);
-    const reason = status?.reason || 'The Codex process has not exposed an exact conversation binding.';
-    const choice = await vscode.window.showInformationMessage(`${chosen.name}\nState: Unknown (live terminal only)\nFolder: ${chosen.cwd}\n${reason}`, 'Open Terminal', 'Open Logs');
-    if (choice === 'Open Terminal') await manager.open(chosen, true);
-    else if (choice === 'Open Logs') output.show();
+    const reason = status?.reason || t('The Codex process has not exposed an exact conversation binding.');
+    const choice = await vscode.window.showInformationMessage(`${chosen.name}\n${t('State: Unknown (live terminal only)')}\n${t('Folder: {0}', [chosen.cwd])}\n${reason}`, t('Open Terminal'), t('Open Logs'));
+    if (choice === t('Open Terminal')) await manager.open(chosen, true);
+    else if (choice === t('Open Logs')) output.show();
     return;
   }
   const tracked = manager.entries.find(item => item.id === chosen.id)
     || manager.entries.find(item => item.provider === chosen.provider && item.sessionId === chosen.sessionId);
   const status = tracked && manager.status.get(tracked.id);
   const state = status?.state || 'saved';
-  const reason = status?.reason || (state === 'saved' ? 'This saved conversation has no currently observed agent process.' : 'No additional diagnostic reason is available.');
-  const message = `${chosen.provider} · ${chosen.name || chosen.title || chosen.sessionId}\nState: ${state}\nFolder: ${chosen.cwd}\n${reason}`;
-  const actions = state === 'restore-failed' ? ['Retry Restore', 'Open Logs'] : ['Open Session', 'Open Logs'];
+  const reason = status?.reason || (state === 'saved' ? t('This saved conversation has no currently observed agent process.') : t('No additional diagnostic reason is available.'));
+  const stateLabel = ({ saved: 'Saved', working: 'Working', open: 'Open', unknown: 'Unknown', 'restore-failed': 'Restore Failed' })[state] || state;
+  const message = `${chosen.provider} · ${chosen.name || chosen.title || chosen.sessionId}\n${t('State: {0}', [t(stateLabel)])}\n${t('Folder: {0}', [chosen.cwd])}\n${reason}`;
+  const actions = state === 'restore-failed' ? [t('Retry Restore'), t('Open Logs')] : [t('Open Session'), t('Open Logs')];
   const choice = await vscode.window.showInformationMessage(message, ...actions);
-  if (choice === 'Retry Restore' && tracked) await manager.open(tracked, true);
-  else if (choice === 'Open Session') await manager.open(tracked || await tree.ensureTracked(chosen), true);
-  else if (choice === 'Open Logs') output.show();
+  if (choice === t('Retry Restore') && tracked) await manager.open(tracked, true);
+  else if (choice === t('Open Session')) await manager.open(tracked || await tree.ensureTracked(chosen), true);
+  else if (choice === t('Open Logs')) output.show();
 }
 
 async function openCompletedSession(manager, id, provider, sessionId) {

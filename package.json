@@ -1,8 +1,8 @@
 {
   "name": "agent-session-restore",
   "displayName": "Rekindle",
-  "description": "Automatically restore your terminal agents when you reopen VS Code.",
-  "version": "0.11.13",
+  "description": "%manifest.b1d425bcb1cd%",
+  "version": "0.11.15",
   "publisher": "ArionLee",
   "license": "MIT",
   "engines": {
@@ -38,274 +38,279 @@
     "commands": [
       {
         "command": "agentSessionRestore.add",
-        "title": "Add Session",
+        "title": "%manifest.04b3d9a7e6aa%",
         "icon": "$(add)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.addInFolder",
-        "title": "New Agent Session Here",
+        "title": "%manifest.066630bbc6a7%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.addHere",
-        "title": "New Session Here",
+        "title": "%manifest.cb92ef283b72%",
         "icon": "$(add)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.restore",
-        "title": "Restore Enabled Sessions",
+        "title": "%manifest.2235a0a92fb2%",
         "icon": "$(debug-restart)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.open",
-        "title": "Open Session",
+        "title": "%manifest.621b98b82732%",
         "icon": "$(terminal)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.rename",
-        "title": "Rename Terminal",
+        "title": "%manifest.bf9953fd8a91%",
         "icon": "$(edit)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.remove",
-        "title": "Forget Session",
+        "title": "%manifest.6f7f8da4fbfd%",
         "icon": "$(close)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.logs",
-        "title": "Show Logs",
+        "title": "%manifest.2dbd3a4a2149%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.enable",
-        "title": "Enable Auto Restore",
+        "title": "%manifest.9e64bdcc70a9%",
         "icon": "$(play)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.disable",
-        "title": "Disable Auto Restore",
+        "title": "%manifest.18fbdbb9ce4e%",
         "icon": "$(debug-pause)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.refreshHistory",
-        "title": "Refresh History",
+        "title": "%manifest.5ffdb33d4817%",
         "icon": "$(refresh)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.expandAll",
-        "title": "Expand All Sessions",
+        "title": "%manifest.13ac495563ab%",
         "icon": "$(expand-all)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.collapseAll",
-        "title": "Collapse All Sessions",
+        "title": "%manifest.390d67645959%",
         "icon": "$(collapse-all)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.showHistory",
-        "title": "Show History",
+        "title": "%manifest.5abbf34ba3f4%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.hideHistory",
-        "title": "Hide History",
+        "title": "%manifest.356f8e6a1ff4%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.groupByFolder",
-        "title": "By Folder",
+        "title": "%manifest.165c5ff43edc%",
         "category": "Rekindle",
         "enablement": "rekindle.groupBy != folder"
       },
       {
         "command": "agentSessionRestore.groupByAgent",
-        "title": "By Agent",
+        "title": "%manifest.17fc2b9da159%",
         "category": "Rekindle",
         "enablement": "rekindle.groupBy != agent"
       },
       {
         "command": "agentSessionRestore.showAllFolders",
-        "title": "Show All Folders",
+        "title": "%manifest.ab6015212abf%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.workspaceOnly",
-        "title": "Current Workspace Only",
+        "title": "%manifest.e913c9555697%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.launchSettings",
-        "title": "Agent Launch Settings",
+        "title": "%manifest.af2ba0bf5415%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.search",
-        "title": "Search Sessions",
+        "title": "%manifest.2dedda605abb%",
         "category": "Rekindle",
         "icon": "$(search)"
       },
       {
         "command": "agentSessionRestore.clearSearch",
-        "title": "Clear Search",
+        "title": "%manifest.87e328dc94be%",
         "category": "Rekindle",
         "icon": "$(clear-all)"
       },
       {
         "command": "agentSessionRestore.enableCompletionNotifications",
-        "title": "Enable Completion Notifications",
+        "title": "%manifest.96de22328479%",
         "category": "Rekindle",
         "icon": "$(bell)"
       },
       {
         "command": "agentSessionRestore.disableCompletionNotifications",
-        "title": "Disable Completion Notifications",
+        "title": "%manifest.3a70d7aae69f%",
         "category": "Rekindle",
         "icon": "$(bell-slash)"
       },
       {
         "command": "agentSessionRestore.editSessionArguments",
-        "title": "Edit Session Arguments",
+        "title": "%manifest.024c4c13f713%",
         "icon": "$(gear)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.openWorkingFolder",
-        "title": "Open Working Folder",
+        "title": "%manifest.6b9685015b59%",
         "icon": "$(folder-opened)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.copyResumeCommand",
-        "title": "Copy Resume Command",
+        "title": "%manifest.263a91c50371%",
         "icon": "$(clippy)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.restart",
-        "title": "Restart Session",
+        "title": "%manifest.5f1145b27456%",
         "icon": "$(debug-restart)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.favorite",
-        "title": "Favorite Session",
+        "title": "%manifest.c5ef0ca552a3%",
         "icon": "$(star-full)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.unfavorite",
-        "title": "Unfavorite Session",
+        "title": "%manifest.de68f274e822%",
         "icon": "$(star-empty)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.hideHistoryEntry",
-        "title": "Hide from History",
+        "title": "%manifest.c0ab86fc2964%",
         "icon": "$(eye-closed)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.hideInactiveHistory",
-        "title": "Hide Visible Inactive History",
+        "title": "%manifest.72b6b176e304%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.resetHiddenHistory",
-        "title": "Reset Hidden History",
+        "title": "%manifest.a3bdc245ffce%",
         "icon": "$(history)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.historyRange1",
-        "title": "Last 1 day",
+        "title": "%manifest.fc8d243d7070%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 1"
       },
       {
         "command": "agentSessionRestore.historyRange3",
-        "title": "Last 3 days",
+        "title": "%manifest.012deaa0d89b%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 3"
       },
       {
         "command": "agentSessionRestore.historyRange7",
-        "title": "Last 7 days",
+        "title": "%manifest.df833fe88d38%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 7"
       },
       {
         "command": "agentSessionRestore.historyRange15",
-        "title": "Last 15 days",
+        "title": "%manifest.bf13fe6b6ad9%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 15"
       },
       {
         "command": "agentSessionRestore.historyRange30",
-        "title": "Last 30 days",
+        "title": "%manifest.6b32985251a1%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 30"
       },
       {
         "command": "agentSessionRestore.historyRangeAll",
-        "title": "All History",
+        "title": "%manifest.5fccc161058e%",
         "category": "Rekindle",
         "enablement": "rekindle.historyRangeDays != 'all'"
       },
       {
         "command": "agentSessionRestore.historyRangeCustom",
-        "title": "Custom Days…",
+        "title": "%manifest.0ea9457690be%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.diagnostics",
-        "title": "Show Diagnostics",
+        "title": "%manifest.b049934e99a1%",
         "icon": "$(output)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.retryRestore",
-        "title": "Retry Restore",
+        "title": "%manifest.47a0c780085c%",
         "icon": "$(debug-restart)",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.openCompletionStatus",
-        "title": "Open Completed Sessions",
+        "title": "%manifest.ce99801f39e2%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.clearCompletionStatus",
-        "title": "Clear Status Bar Reminders",
+        "title": "%manifest.40aae556c26e%",
         "category": "Rekindle"
       },
       {
         "command": "agentSessionRestore.completionLocationStatusBar",
-        "title": "Use Status Bar Reminders",
+        "title": "%manifest.ea0948575a37%",
         "category": "Rekindle",
         "enablement": "rekindle.completionNotificationLocation != statusBar"
       },
       {
         "command": "agentSessionRestore.completionLocationNative",
-        "title": "Use Native Notifications",
+        "title": "%manifest.20b18fd8cb18%",
         "category": "Rekindle",
         "enablement": "rekindle.completionNotificationLocation != native"
       },
       {
         "command": "agentSessionRestore.completionLocationBoth",
-        "title": "Use Both Reminder Locations",
+        "title": "%manifest.1df8a4c86feb%",
         "category": "Rekindle",
         "enablement": "rekindle.completionNotificationLocation != both"
+      },
+      {
+        "command": "agentSessionRestore.changeLanguage",
+        "title": "%manifest.changeLanguageTitle%",
+        "category": "Rekindle"
       }
     ],
     "viewsContainers": {
@@ -328,7 +333,7 @@
     "viewsWelcome": [
       {
         "view": "agentSessionRestore.sessions",
-        "contents": "Your terminal agents, right where you left them.\n\nStart Codex, pi, Claude Code, or AGY in a normal terminal. Rekindle remembers the conversation and restores it when you reopen this workspace.\n\n[Add an existing session](command:agentSessionRestore.add)",
+        "contents": "%manifest.914583fc7bfe%",
         "when": "!agentSessionRestore.hasSessions"
       }
     ],
@@ -433,6 +438,11 @@
           "command": "agentSessionRestore.clearCompletionStatus",
           "when": "view == agentSessionRestore.sessions && rekindle.hasPendingCompletion",
           "group": "3_settings@4"
+        },
+        {
+          "command": "agentSessionRestore.changeLanguage",
+          "when": "view == agentSessionRestore.sessions",
+          "group": "3_settings@5"
         }
       ],
       "view/item/context": [
@@ -585,60 +595,60 @@
         "agentSessionRestore.autoRestore": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically restore tracked agent terminals when opening this workspace."
+          "description": "%manifest.9a18f479ace2%"
         },
         "agentSessionRestore.completionNotifications": {
           "type": "boolean",
           "default": true,
-          "description": "Master switch for completion reminders in any location. Enabled by default; turn off from the Sessions view menu or set false."
+          "description": "%manifest.181351437987%"
         },
         "agentSessionRestore.codexCommand": {
           "type": "string",
           "default": "codex",
           "scope": "machine",
-          "description": "Codex executable name or absolute path (without arguments)."
+          "description": "%manifest.65cecc28f897%"
         },
         "agentSessionRestore.piCommand": {
           "type": "string",
           "default": "pi",
           "scope": "machine",
-          "description": "pi executable name or absolute path (without arguments)."
+          "description": "%manifest.4276efa2bd13%"
         },
         "agentSessionRestore.codexHome": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Codex data directory. Empty uses CODEX_HOME or ~/.codex."
+          "description": "%manifest.18d934919144%"
         },
         "agentSessionRestore.piHome": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "pi data directory. Empty uses PI_CODING_AGENT_DIR or ~/.pi/agent."
+          "description": "%manifest.19286efe7de4%"
         },
         "agentSessionRestore.claudeCommand": {
           "type": "string",
           "default": "claude",
           "scope": "machine",
-          "description": "claude executable name or absolute path (without arguments)."
+          "description": "%manifest.4f6081d2d3ef%"
         },
         "agentSessionRestore.agyCommand": {
           "type": "string",
           "default": "agy",
           "scope": "machine",
-          "description": "agy executable name or absolute path (without arguments)."
+          "description": "%manifest.f47dfe5113f7%"
         },
         "agentSessionRestore.claudeHome": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "claude data directory for the history browser. Empty uses the standard location."
+          "description": "%manifest.1f5ac7579ea2%"
         },
         "agentSessionRestore.agyHome": {
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "agy data directory for the history browser. Empty uses the standard location."
+          "description": "%manifest.37d5858d8ced%"
         },
         "agentSessionRestore.codexArguments": {
           "type": "array",
@@ -648,7 +658,7 @@
           },
           "default": [],
           "scope": "machine",
-          "markdownDescription": "Extra Codex startup arguments used when restoring or opening a session. Each item is one argument (for example, `--yolo`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+          "markdownDescription": "%manifest.0e71090fc287%"
         },
         "agentSessionRestore.piArguments": {
           "type": "array",
@@ -658,7 +668,7 @@
           },
           "default": [],
           "scope": "machine",
-          "markdownDescription": "Extra pi startup arguments used when restoring or opening a session. Each item is one argument (for example, `--model`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+          "markdownDescription": "%manifest.2e5d36b4443b%"
         },
         "agentSessionRestore.claudeArguments": {
           "type": "array",
@@ -671,7 +681,7 @@
             "bypassPermissions"
           ],
           "scope": "machine",
-          "markdownDescription": "Extra Claude Code startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+          "markdownDescription": "%manifest.56c94bd39ae3%"
         },
         "agentSessionRestore.agyArguments": {
           "type": "array",
@@ -681,7 +691,7 @@
           },
           "default": [],
           "scope": "machine",
-          "markdownDescription": "Extra AGY startup arguments used when restoring or opening a session. Each item is one argument (for example, `--dangerously-skip-permissions`). Applied before the exact-session resume arguments. Changes take effect the next time the agent starts."
+          "markdownDescription": "%manifest.c33e4dbeca3a%"
         },
         "agentSessionRestore.historyRangeDays": {
           "type": "integer",
@@ -689,7 +699,7 @@
           "maximum": 36500,
           "default": 30,
           "scope": "window",
-          "description": "Initial History Range in days when this workspace has no saved Sessions view choice. The Sessions → … → History Range menu stores later selections per workspace."
+          "description": "%manifest.6ae69dc1ba1a%"
         },
         "agentSessionRestore.completionNotificationLocation": {
           "type": "string",
@@ -699,24 +709,46 @@
             "both"
           ],
           "enumDescriptions": [
-            "Show persistent clickable reminders in the status bar (default).",
-            "Show the compact native VS Code toast.",
-            "Show both the status bar reminder and native toast."
+            "%manifest.4b7d2cb99e3d%",
+            "%manifest.26987b41f5ef%",
+            "%manifest.21c914602d72%"
           ],
           "default": "statusBar",
           "scope": "window",
-          "description": "Where to show completed-session reminders. The existing completionNotifications setting disables all reminder locations."
+          "description": "%manifest.f0c7590dd9b2%"
         },
         "agentSessionRestore.sessionPulse": {
           "type": "boolean",
           "default": true,
           "scope": "window",
-          "description": "Animate the provider dot for a session while it is working. Set false to disable the pulse."
+          "description": "%manifest.59351fd0aede%"
         },
         "agentSessionRestore.codexDedicatedProcess": {
           "type": "boolean",
           "default": true,
-          "description": "Use a dedicated Codex process for each terminal when the CLI supports it. Improves exact session tracking when multiple Codex terminals share a folder. Takes effect on the next agent launch."
+          "description": "%manifest.2acf9ef8cd12%"
+        },
+        "agentSessionRestore.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "en",
+            "zh-cn",
+            "zh-tw",
+            "ja",
+            "ko"
+          ],
+          "default": "auto",
+          "scope": "application",
+          "enumDescriptions": [
+            "%manifest.language.auto%",
+            "%manifest.language.en%",
+            "%manifest.language.zhCn%",
+            "%manifest.language.zhTw%",
+            "%manifest.language.ja%",
+            "%manifest.language.ko%"
+          ],
+          "description": "%manifest.language.description%"
         }
       }
     },
@@ -727,15 +759,15 @@
     "submenus": [
       {
         "id": "rekindle.groupBy",
-        "label": "Group By"
+        "label": "%manifest.b75390dfaecc%"
       },
       {
         "id": "rekindle.historyRange",
-        "label": "History Range"
+        "label": "%manifest.91c8b5bd5134%"
       },
       {
         "id": "rekindle.completionLocation",
-        "label": "Completion Reminder Location"
+        "label": "%manifest.d000e53a1475%"
       }
     ]
   },

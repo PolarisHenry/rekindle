@@ -2,6 +2,7 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { t } = require('./localization');
 const { expandHome } = require('./core');
 const { PROVIDERS } = require('./providers');
 
@@ -17,7 +18,7 @@ async function chooseProvider(vscode, preferred) {
   const context = resolveAddContext(preferred);
   const selected = PROVIDERS.find(item => item.value === context.provider);
   return selected || vscode.window.showQuickPick([...PROVIDERS], {
-    title: 'Rekindle: Add Session', placeHolder: 'Choose an agent'
+    title: t('Rekindle: Add Session'), placeHolder: t('Choose an agent')
   });
 }
 
@@ -30,7 +31,7 @@ async function resolveWorkingDirectory(options) {
   if (typeof cwd === 'string' && cwd.length > 0) {
     let directory;
     if (path.isAbsolute(cwd)) directory = await stat(cwd).catch(() => undefined);
-    if (!directory?.isDirectory()) throw new Error(`The selected folder is unavailable: ${cwd}. Choose a valid folder and try again.`);
+    if (!directory?.isDirectory()) throw new Error(t('The selected folder is unavailable: {0}. Choose a valid folder and try again.', [cwd]));
     return cwd;
   }
   return chooseDirectory(folders, suggested);
@@ -40,11 +41,11 @@ function directoryPickerItems(value, fixed, initial, recent, active) {
   const typed = expandHome(String(value || '').trim());
   const items = [];
   if (typed && path.isAbsolute(typed) && !fixed.includes(typed)) {
-    items.push({ label: `$(folder) Use ${typed}`, typedPath: typed, description: 'Use the typed folder path', alwaysShow: true });
+    items.push({ label: `$(folder) ${t('Use')} ${typed}`, typedPath: typed, description: t('Use the typed folder path'), alwaysShow: true });
   }
-  for (const cwd of fixed) items.push({ label: cwd, cwd, description: cwd === initial ? 'Current folder' : recent.includes(cwd) ? 'Recently used' : undefined });
-  if (active && !fixed.includes(active)) items.push({ label: active, cwd: active, description: 'Active terminal folder' });
-  items.push({ label: '$(folder-opened) Browse for any folder…', browse: true, description: 'Open the system folder picker', alwaysShow: true });
+  for (const cwd of fixed) items.push({ label: cwd, cwd, description: cwd === initial ? t('Current folder') : recent.includes(cwd) ? t('Recently used') : undefined });
+  if (active && !fixed.includes(active)) items.push({ label: active, cwd: active, description: t('Active terminal folder') });
+  items.push({ label: '$(folder-opened) ' + t('Browse for any folder…'), browse: true, description: t('Open the system folder picker'), alwaysShow: true });
   return items;
 }
 
@@ -60,8 +61,8 @@ function chooseDirectoryWithPicker(vscode, options = {}) {
   const fixed = [...new Set([initial, ...folders, ...recent.filter(item => !folders.includes(item) && item !== initial)].filter(Boolean))];
   return new Promise(resolve => {
     const picker = vscode.window.createQuickPick();
-    picker.title = 'Conversation working directory';
-    picker.placeholder = 'Pick a folder, or type/paste an absolute path (~ supported)';
+    picker.title = t('Conversation working directory');
+    picker.placeholder = t('Pick a folder, or type/paste an absolute path (~ supported)');
     let result;
     let interacting = false;
     let hiddenDuringDialog = false;

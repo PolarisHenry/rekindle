@@ -1,4 +1,5 @@
 'use strict';
+const { t } = require('./localization');
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -27,15 +28,15 @@ function normalizeTimestamp(value) {
 }
 
 function shellQuote(value) {
-  if (typeof value !== 'string' || /[\0\r\n]/.test(value)) throw new Error('Invalid characters in a command argument');
+  if (typeof value !== 'string' || /[\0\r\n]/.test(value)) throw new Error(t('Invalid characters in a command argument'));
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 function startupArguments(provider, config = {}) {
-  if (!['codex', 'pi', 'claude', 'agy'].includes(provider)) throw new Error('Invalid agent provider');
+  if (!['codex', 'pi', 'claude', 'agy'].includes(provider)) throw new Error(t('Invalid agent provider'));
   const extra = config[`${provider}Arguments`] ?? [];
   if (!Array.isArray(extra) || extra.some(value => typeof value !== 'string' || /[\0\r\n]/.test(value))) {
-    throw new Error(`${provider}Arguments must be an array of single-line strings`);
+    throw new Error(t('Arguments must be an array of single-line strings for {0}.', [provider]));
   }
   return extra;
 }
@@ -45,7 +46,7 @@ function newSessionCommand(provider, config = {}) {
 }
 
 function resumeArguments(session, config = {}) {
-  if (typeof session.sessionId !== 'string' || !session.sessionId.trim()) throw new Error('Invalid agent session');
+  if (typeof session.sessionId !== 'string' || !session.sessionId.trim()) throw new Error(t('Invalid agent session'));
   const extra = startupArguments(session.provider, config);
   if (session.provider === 'codex') return [...extra, 'resume', session.sessionId];
   if (session.provider === 'claude') return [...extra, '--resume', session.sessionId];
@@ -220,7 +221,7 @@ async function discoverSessions(provider, config = {}, warn = () => {}) {
       } catch { return []; }
     });
   }
-  throw new Error('Unsupported agent provider');
+  throw new Error(t('Unsupported agent provider'));
 }
 
 module.exports = { startupArguments, newSessionCommand, expandHome, sessionKey, normalizeTimestamp, shellQuote, resumeArguments, resumeCommand, launchOptions, cleanTitle, isInWorkspace, resolveTargetFolder, dispatchFolderAdd, discoverSessions };

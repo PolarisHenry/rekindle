@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.15
+
+- Add a user-level Rekindle interface language preference with automatic VS Code language following and an immediate language picker. Native VS Code menus and setting descriptions still use VS Code’s display language.
+
+
+## 0.11.14
+
+- Localize the extension interface and VS Code manifest for English, Simplified Chinese, Traditional Chinese, Japanese, and Korean. The extension follows VS Code’s display language.
+
+
 ## 0.11.13
 
 - Restore agent terminals grouped in the same order as Add Session (pi, Codex, Claude Code, Antigravity), preserving saved order within each agent.

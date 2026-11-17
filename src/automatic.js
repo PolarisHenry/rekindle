@@ -1,4 +1,5 @@
 'use strict';
+const { t } = require('./localization');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -528,7 +529,7 @@ class AutomaticTracker {
           if (session.working === true) workingNow.add(entry.id);
           const state = session.working === true ? 'working' : session.working === false ? 'open' : 'unknown';
           const oldStatus = this.manager.status?.get(entry.id);
-          const reason = state === 'unknown' ? 'The agent process is open, but its task state cannot be identified from supported lifecycle events.' : undefined;
+          const reason = state === 'unknown' ? t('The agent process is open, but its task state cannot be identified from supported lifecycle events.') : undefined;
           if (state === 'unknown' && oldStatus?.state !== 'unknown') this.log(`Task status unknown for ${entry.provider} session ${entry.name}: ${reason}`);
           this.manager.status?.set(entry.id, { state, ...(reason ? { reason } : {}), updatedAt: Date.now() });
           visibleStates.set(entry.id, `${state}:${reason || ''}`);
@@ -566,10 +567,10 @@ class AutomaticTracker {
           const state = agentPresent ? 'unknown' : 'saved';
           const waitingForLifecycle = agentPresent && boundToEntry && owner.provider === entry.provider && ['agy', 'claude', 'pi'].includes(entry.provider);
           const reason = waitingForLifecycle
-            ? 'The restored agent process is attached. Waiting for its first lifecycle report; task activity is not known yet. Resumed sessions may report only after the next request.'
+            ? t('The restored agent process is attached. Waiting for its first lifecycle report; task activity is not known yet. Resumed sessions may report only after the next request.')
             : agentPresent
-            ? 'An agent is still running, but the exact conversation or task lifecycle is not identifiable. Check Logs or reopen the saved session.'
-            : 'No agent process is attached to this terminal. The saved conversation can be opened again.';
+            ? t('An agent is still running, but the exact conversation or task lifecycle is not identifiable. Check Logs or reopen the saved session.')
+            : t('No agent process is attached to this terminal. The saved conversation can be opened again.');
           this.manager.status?.set(entry.id, { state, reason, updatedAt: Date.now() });
           if (agentPresent && this.lastVisibleStates?.get(entry.id) !== `${state}:${reason}`) this.log(`${waitingForLifecycle ? 'Waiting for lifecycle report' : 'Session status unknown'} for ${entry.provider} session ${entry.name}: ${reason}`);
           visibleStates.set(entry.id, `${state}:${reason}`);
@@ -631,7 +632,7 @@ class AutomaticTracker {
     // notification controls consume width on hover; long text can expand the toast
     // and move a trailing link away from the pointer.
     const tooltip = `${providerName} · ${entry.name} · ${entry.cwd || pathName}`.replace(/[\\"\r\n]/g, ' ');
-    void this.vscode.window.showInformationMessage(`[Open Session](${command} "${tooltip}") · ${providerName} · ${summary} ✓`)
+    void this.vscode.window.showInformationMessage(`[${t('Open Session')}](${command} "${tooltip}") · ${providerName} · ${summary} ✓`)
       .then(undefined, error => this.log(`Notification failed: ${error.message}`));
   }
 

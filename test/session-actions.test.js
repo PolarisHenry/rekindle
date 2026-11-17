@@ -19,7 +19,7 @@ test('command-palette actions can select a saved session without mutating it',as
 test('selected tree session is preferred and diagnostic Open Session tracks and opens a native row only after click',async()=>{
  const entry={id:'history:pi:old',provider:'pi',sessionId:'old',title:'Old',cwd:'/work'};
  let quickPickCalls=0,tracked=0,opened=[];
- const vscode={window:{showQuickPick:async()=>{quickPickCalls++;return undefined;},showInformationMessage:async(message,...actions)=>{assert.match(message,/State: saved/);return 'Open Session';}}};
+ const vscode={window:{showQuickPick:async()=>{quickPickCalls++;return undefined;},showInformationMessage:async(message,...actions)=>{assert.match(message,/State: Saved/);return 'Open Session';}}};
  const manager={entries:[],status:new Map(),open:async row=>opened.push(row.id)};
  const tree={showHistory:true,view:{selection:[entry]},history:[],async ensureTracked(row){tracked++;return {...row,id:'tracked-old'};}};
  assert.equal(await selectSession(vscode,manager,tree),entry);

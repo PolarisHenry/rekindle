@@ -1,4 +1,5 @@
 'use strict';
+const { t } = require('./localization');
 
 async function createAgentTerminal(vscode, options, log, acquireApi, existing) {
   const extension = vscode.extensions?.getExtension('ms-python.vscode-python-envs');
@@ -56,8 +57,8 @@ class ShellGate {
     const notBefore = Date.now() + grace;
     const deadline = Date.now() + timeout;
     while (state.active.size || Date.now() < Math.max(notBefore, state.last + quiet)) {
-      if (!this.vscode.window.terminals.includes(terminal)) throw new Error('Terminal closed before environment setup completed.');
-      if (Date.now() > deadline) throw new Error('Terminal is still running a setup command. Agent restore was deferred to avoid sending input into it.');
+      if (!this.vscode.window.terminals.includes(terminal)) throw new Error(t('Terminal closed before environment setup completed.'));
+      if (Date.now() > deadline) throw new Error(t('Terminal is still running a setup command. Agent restore was deferred to avoid sending input into it.'));
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   }
