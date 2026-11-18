@@ -3,6 +3,10 @@
 
 Rekindle remembers the conversations running in your VS Code terminals and restores them when you reopen the workspace. Open a terminal and use your agent normally. There is no session picker to maintain.
 
+![Rekindle session sidebar and restored agent terminals](media/rekindle-demo-restored.gif)
+
+Restored agent conversations, grouped in the sidebar and ready in their own terminals.
+
 ## What it does
 
 - Tracks each terminal's conversation ID, working directory, and title automatically.
